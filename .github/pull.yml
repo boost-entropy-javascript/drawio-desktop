@@ -1,6 +1,6 @@
 version: "1"
 rules:
   - base: dev
-    upstream: null:dev
+    upstream: jgraph:dev
     mergeMethod: merge
     mergeUnstable: true
