@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev
-
 jobs:
   boost-native:
     name: Native Scanner
