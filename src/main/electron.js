@@ -136,9 +136,29 @@ function createWindow (opt = {})
 			disableBlinkFeatures: 'Auxclick' // Is this needed?
 		}
 	}, opt)
+	
+	if (lastWinSize[2] != null)
+	{
+		options.x = parseInt(lastWinSize[2]);
+	}
+
+	if (lastWinSize[3] != null)
+	{
+		options.y = parseInt(lastWinSize[3]);
+	}
 
 	let mainWindow = new BrowserWindow(options)
 	windowsRegistry.push(mainWindow)
+
+	if (lastWinSize[4] === 'true')
+	{
+		mainWindow.maximize()
+	}
+
+	if (lastWinSize[5] === 'true')
+	{
+		mainWindow.setFullScreen(true);
+	}
 
 	if (__DEV__) 
 	{
@@ -171,22 +191,34 @@ function createWindow (opt = {})
 		mainWindow.webContents.openDevTools();
 	});
 
+	function rememberWinSize(win)
+	{
+		const size = win.getSize();
+		const pos = win.getPosition();
+		store.set('lastWinSize', size[0] + ',' + size[1] + ',' + pos[0] + ',' + pos[1] + ',' + win.isMaximized() + ',' + win.isFullScreen());
+	}
+
 	mainWindow.on('maximize', function()
 	{
+		rememberWinSize(mainWindow);
 		mainWindow.webContents.send('maximize')
 	});
 
 	mainWindow.on('unmaximize', function()
 	{
+		rememberWinSize(mainWindow);
 		mainWindow.webContents.send('unmaximize')
 	});
 
 	mainWindow.on('resize', function()
 	{
-		const size = mainWindow.getSize();
-		store.set('lastWinSize', size[0] + ',' + size[1]);
-
+		rememberWinSize(mainWindow);
 		mainWindow.webContents.send('resize')
+	});
+
+	mainWindow.on('move', function()
+	{
+		rememberWinSize(mainWindow);
 	});
 
 	mainWindow.on('close', (event) =>
@@ -342,6 +374,7 @@ app.on('ready', e =>
 
 	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|vsdx|xml)$/;
 	var themeRegExp = /^(dark|light)$/;
+	var linkTargetRegExp = /^(auto|new-win|same-win)$/;
 	
 	function argsRange(val) 
 	{
@@ -394,6 +427,8 @@ app.on('ready', e =>
 				'scales the application interface', parseFloat)
 			.option('--svg-theme <theme>',
 				'Theme of the exported SVG image (dark, light [default])', themeRegExp, 'light')
+			.option('--svg-links-target <target>',
+				'Target of links in the exported SVG image (auto [default], new-win, same-win)', linkTargetRegExp, 'auto')
 			.option('--enable-plugins',
 				'Enable Plugins')
 	        .parse(argv)
@@ -500,7 +535,8 @@ app.on('ready', e =>
 				embedImages: options.embedSvgImages? '1' : '0',
 				jpegQuality: options.quality,
 				uncompressed: options.uncompressed,
-				theme: options.svgTheme
+				theme: options.svgTheme,
+				linkTarget: options.svgLinksTarget
 			};
 
 			if (options.layers)
@@ -1473,7 +1509,7 @@ function exportDiagram(event, args, directFinalize)
 		if (pageByPage)
 		{
 			from = args.allPages? 0 : parseInt(args.from || 0);
-			to = args.allPages? 1000 : parseInt(args.to || 1000) + 1; //The 'to' will be corrected later
+			to = args.allPages? 1000 : parseInt(args.to != null? args.to : 1000) + 1; //The 'to' will be corrected later
 			pdfs = [];
 
 			args.from = from;
