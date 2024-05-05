@@ -3,7 +3,7 @@ const fsProm = require('fs/promises');
 const os = require('os');
 const path = require('path')
 const url = require('url')
-const {Menu: menu, shell, dialog, session,
+const {Menu: menu, shell, dialog, session, screen, 
 		clipboard, nativeImage, ipcMain, app, BrowserWindow} = require('electron')
 const crc = require('crc');
 const zlib = require('zlib');
@@ -20,7 +20,8 @@ const disableUpdate = require('./disableUpdate').disableUpdate() ||
 						process.env.DRAWIO_DISABLE_UPDATE === 'true' || 
 						fs.existsSync('/.flatpak-info'); //This file indicates running in flatpak sandbox
 autoUpdater.logger = log
-autoUpdater.logger.transports.file.level = 'info'
+autoUpdater.logger.transports.file.level = 'error'
+autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = false
 
 //Command option to disable hardware acceleration
@@ -105,6 +106,23 @@ function validateSender (frame)
 	return frame.url.replace(/\/.\:\//, str => str.toUpperCase()).startsWith(codeUrl);
 }
 
+function isWithinDisplayBounds(pos) 
+{
+	const displays = screen.getAllDisplays();
+
+	return displays.reduce((result, display) => 
+	{
+		const area = display.workArea
+		return (
+			result ||
+			(pos.x >= area.x &&
+			pos.y >= area.y &&
+			pos.x < area.x + area.width &&
+			pos.y < area.y + area.height)
+		)
+	}, false)
+}
+
 function createWindow (opt = {})
 {
 	let lastWinSizeStr = store.get('lastWinSize');
@@ -145,6 +163,12 @@ function createWindow (opt = {})
 	if (lastWinSize[3] != null)
 	{
 		options.y = parseInt(lastWinSize[3]);
+	}
+
+	if (!isWithinDisplayBounds(options))
+	{
+		options.x = null;
+		options.y = null;
 	}
 
 	let mainWindow = new BrowserWindow(options)
@@ -904,6 +928,20 @@ app.on('ready', e =>
 
 	ipcMain.on('toggleGoogleFonts', toggleGoogleFonts);
 
+	function toggleFullscreen(e)
+	{
+		if (e != null && !validateSender(e.senderFrame)) return null;
+
+		let win = BrowserWindow.getFocusedWindow();
+
+		if (win != null)
+		{
+			win.setFullScreen(!win.isFullScreen());
+		}
+	};
+
+	ipcMain.on('toggleFullscreen', toggleFullscreen);
+
     let updateNoAvailAdded = false;
     
 	function checkForUpdatesFn(e) 
@@ -1115,8 +1153,6 @@ autoUpdater.on('error', e => log.error('@error@\n', e))
 
 autoUpdater.on('update-available', (a, b) =>
 {
-	log.info('@update-available@\n', a, b)
-	
 	dialog.showMessageBox(
 	{
 		type: 'question',
@@ -1158,8 +1194,6 @@ autoUpdater.on('update-available', (a, b) =>
 			
 			autoUpdater.on('download-progress', (d) => {
 				//On mac, download-progress event is not called, so the indeterminate progress will continue until download is finished
-				log.info('@update-progress@\n', d);
-				
 				var percent = d.percent;
 				
 				if (percent)
@@ -1185,7 +1219,10 @@ autoUpdater.on('update-available', (a, b) =>
 								progressBar.detail = 'Download completed.';
 							})
 							.on('aborted', function(value) {
-								log.info(`progress aborted... ${value}`);
+								if (__DEV__)
+								{
+									log.error(`progress aborted... ${value}`);
+								}
 							})
 							.on('progress', function(value) {
 								progressBar.detail = `${value}% ...`;
@@ -1207,7 +1244,6 @@ autoUpdater.on('update-available', (a, b) =>
 					progressBar.close()
 				}
 		
-				log.info('@update-downloaded@\n', info)
 				// Ask user to update the app
 				dialog.showMessageBox(
 				{
@@ -1228,7 +1264,6 @@ autoUpdater.on('update-available', (a, b) =>
 		else if (result.response === 2)
 		{
 			//save in settings don't check for updates
-			log.info('@dont check for updates!@')
 			store.set('dontCheckUpdates', true)
 		}
 	})
@@ -2563,6 +2598,9 @@ ipcMain.on("rendererReq", async (event, args) =>
 			break;
 		case 'exit':
 			app.quit();
+			break;
+		case 'isFullscreen':
+			ret = BrowserWindow.getFocusedWindow().isFullScreen();
 			break;
 		};
 
