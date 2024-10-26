@@ -49,7 +49,7 @@
     "@electron/fuses": "^1.8.0",
     "@electron/notarize": "^2.4.0",
     "dotenv": "^16.4.5",
-    "electron": "32.0.1",
+    "electron": "^32.0.1",
     "electron-builder": "^24.9.1",
     "sumchecker": "^3.0.1"
   }
