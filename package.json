@@ -1,6 +1,6 @@
 {
   "name": "draw.io",
-  "version": "25.0.0",
+  "version": "25.0.2",
   "description": "draw.io desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
@@ -47,10 +47,10 @@
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",
-    "@electron/notarize": "^2.4.0",
+    "@electron/notarize": "^2.5.0",
     "dotenv": "^16.4.5",
-    "electron": "^32.0.1",
-    "electron-builder": "^24.9.1",
+    "electron": "32.2.5",
+    "electron-builder": "^25.1.8",
     "sumchecker": "^3.0.1"
   }
 }
