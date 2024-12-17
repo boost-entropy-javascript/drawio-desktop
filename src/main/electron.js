@@ -456,7 +456,7 @@ app.whenReady().then(() =>
 			.option('-z, --zoom <zoom>',
 				'scales the application interface', parseFloat)
 			.option('--svg-theme <theme>',
-				'Theme of the exported SVG image (dark, light [default])', themeRegExp, 'light')
+				'Theme of the exported SVG image (dark, light, auto [default])', themeRegExp, 'auto')
 			.option('--svg-links-target <target>',
 				'Target of links in the exported SVG image (auto [default], new-win, same-win)', linkTargetRegExp, 'auto')
 			.option('--enable-plugins',
