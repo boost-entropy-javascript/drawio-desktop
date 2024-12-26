@@ -244,14 +244,15 @@ function createWindow (opt = {})
 		mainWindow.webContents.send('resize')
 	});
 
-	let uniqueIsModifiedId;
+	let uniqueIsModifiedId, modifiedModalOpen = false;
 
 	ipcMain.on('isModified-result', async (e, data) =>
 	{
-		if (!validateSender(e.senderFrame) || uniqueIsModifiedId != data.uniqueId) return null;
+		if (!validateSender(e.senderFrame) || uniqueIsModifiedId != data.uniqueId || modifiedModalOpen) return null;
 
 		if (data.isModified)
 		{
+			modifiedModalOpen = true;
 			// Can't use async function here because it crashes on Linux when win.destroy is called
 			let response = dialog.showMessageBoxSync(
 				mainWindow,
@@ -285,6 +286,7 @@ function createWindow (opt = {})
 			else
 			{
 				cmdQPressed = false;
+				modifiedModalOpen = false;
 			}
 		}
 		else
