@@ -435,6 +435,8 @@ app.whenReady().then(() =>
 				'includes a copy of the diagram (for PNG, SVG and PDF formats only)')
 			.option('--embed-svg-images',
 				'Embed Images in SVG file (for SVG format only)')
+			.option('--embed-svg-fonts <true/false>',
+				'Embed Fonts in SVG file (for SVG format only). Default is true', function(x){return x === 'true'}, true)
 			.option('-b, --border <border>',
 				'sets the border width around the diagram (default: 0)', parseInt)
 			.option('-s, --scale <scale>',
@@ -565,6 +567,7 @@ app.whenReady().then(() =>
 				scale: (options.scale || 1),
 				embedXml: options.embedDiagram? '1' : '0',
 				embedImages: options.embedSvgImages? '1' : '0',
+				embedFonts: options.embedSvgFonts? '1' : '0',
 				jpegQuality: options.quality,
 				uncompressed: options.uncompressed,
 				theme: options.svgTheme,
