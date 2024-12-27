@@ -559,7 +559,6 @@ app.whenReady().then(() =>
 				format: format,
 				w: options.width > 0 ? options.width : null,
 				h: options.height > 0 ? options.height : null,
-				pageMargin: options.border > 0 ? options.border : 0,
 				bg: options.transparent ? 'none' : '#ffffff',
 				from: from,
 				to: to,
@@ -574,6 +573,17 @@ app.whenReady().then(() =>
 				linkTarget: options.svgLinksTarget,
 				crop: (options.crop && format == 'pdf') ? '1' : '0'
 			};
+
+			options.border = options.border > 0 ? options.border : 0;
+
+			if (format === 'pdf') 
+			{
+				expArgs.pageMargin = options.border;
+			}
+			else
+			{
+				expArgs.border = options.border;
+			}
 
 			if (options.layers)
 			{
