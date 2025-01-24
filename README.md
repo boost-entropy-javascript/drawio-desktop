@@ -19,9 +19,9 @@ Security and isolating the app are the primarily objectives of draw.io desktop. 
 Support
 -------
 
-Support is provided on a reasonable business constraints basis, but without anything contractually binding. All support is provided via this repo. There is no private ticketing support.
+Support is provided on a reasonable business constraints basis, but without anything contractually binding. All support is provided via this repo. There is no private ticketing support for non-paying users.
 
-Purchasing draw.io for Confluence or Jira does not entitle you to commercial support for draw.io desktop. The draw.io integrations for Atlassian are sold by Seibert Media, they have no involvement with this project.
+Purchasing draw.io for Confluence or Jira does not entitle you to commercial support for draw.io desktop, unless you have a paid advanced (premium) edition of draw.io for Confluence Cloud.
 
 Developing
 ----------
