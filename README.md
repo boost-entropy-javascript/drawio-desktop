@@ -1,7 +1,7 @@
 About
 ----- 
 
-**drawio-desktop** is a diagramming and whiteboarding desktop app based on [Electron](https://electronjs.org/) that wraps the [core draw.io editor](https://github.com/jgraph/drawio).
+**drawio-desktop** is a diagramming desktop app based on [Electron](https://electronjs.org/) that wraps the [core draw.io editor](https://github.com/jgraph/drawio).
 
 Download built binaries from the [releases section](https://github.com/jgraph/drawio-desktop/releases).
 
