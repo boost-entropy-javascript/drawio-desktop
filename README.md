@@ -56,7 +56,7 @@ Local Storage and Session Storage is stored in the AppData folder:
 Not open-contribution
 ---------------------
 
-draw.io is closed to contributions.
+draw.io is closed to contributions (unless a maintainer permits it, which is extremely rare).
 
 The level of complexity of this project means that even simple changes 
 can break a _lot_ of other moving parts. The amount of testing required 
