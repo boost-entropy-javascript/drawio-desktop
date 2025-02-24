@@ -10,7 +10,7 @@ import log from'electron-log';
 import { program } from 'commander';
 import elecUpPkg from 'electron-updater';
 const {autoUpdater} = elecUpPkg;
-import {PDFDocument} from 'pdf-lib';
+import {PDFDocument} from '@cantoo/pdf-lib';
 import Store from 'electron-store';
 const store = new Store();
 import ProgressBar from 'electron-progressbar';
