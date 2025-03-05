@@ -404,7 +404,7 @@ app.whenReady().then(() =>
         argv.unshift(null)
     }
 
-	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|vsdx|xml)$/;
+	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|xml)$/;
 	var themeRegExp = /^(dark|light)$/;
 	var linkTargetRegExp = /^(auto|new-win|same-win)$/;
 	
@@ -425,7 +425,7 @@ app.whenReady().then(() =>
 	        .option('-r, --recursive', 'for a folder input, recursively convert all files in sub-folders also')
 	        .option('-o, --output <output file/folder>', 'specify the output file/folder. If omitted, the input file name is used for output with the specified format as extension')
 	        .option('-f, --format <format>',
-			    'if output file name extension is specified, this option is ignored (file type is determined from output extension, possible export formats are pdf, png, jpg, svg, vsdx, and xml)',
+			    'if output file name extension is specified, this option is ignored (file type is determined from output extension, possible export formats are pdf, png, jpg, svg, and xml)',
 			    validFormatRegExp, 'pdf')
 			.option('-q, --quality <quality>',
 				'output image quality for JPEG (default: 90)', parseInt)
@@ -770,7 +770,7 @@ app.whenReady().then(() =>
 														}
 													}
 													
-													fs.writeFileSync(realFileName, data, format == 'vsdx'? 'base64' : null, { flag: 'wx' });
+													fs.writeFileSync(realFileName, data, null, { flag: 'wx' });
 													console.log(curFile + ' -> ' + realFileName);
 												}
 												catch(e)
@@ -1501,71 +1501,6 @@ function writePngWithText(origBuff, key, text, compressed, base64encoded)
 	}
 }
 
-//TODO Create a lightweight html file similar to export3.html for exporting to vsdx
-function exportVsdx(event, args, directFinalize)
-{
-	let win = createWindow({
-		show : false
-	});
-
-	let loadEvtCount = 0;
-			
-	function loadFinished(e)
-	{
-		if (e != null && e.senderFrame != null &&
-			!validateSender(e.senderFrame)) return null;
-
-		loadEvtCount++;
-		
-		if (loadEvtCount == 2)
-		{
-	    	win.webContents.send('export-vsdx', args);
-	    	
-	        ipcMain.once('export-vsdx-finished', (e, data) =>
-			{
-				if (!validateSender(e.senderFrame)) return null;
-
-				var hasError = false;
-				
-				if (data == null)
-				{
-					hasError = true;
-				}
-				
-				//Set finalize here since it is call in the reply below
-				function finalize()
-				{
-					win.destroy();
-				};
-				
-				if (directFinalize === true)
-				{
-					event.finalize = finalize;
-				}
-				else
-				{
-					//Destroy the window after response being received by caller
-					ipcMain.once('export-finalize', finalize);
-				}
-				
-				if (hasError)
-				{
-					event.reply('export-error');
-				}
-				else
-				{
-					event.reply('export-success', data);
-				}
-			});
-		}
-	}
-	
-	//Order of these two events is not guaranteed, so wait for them async.
-	//TOOD There is still a chance we catch another window 'app-load-finished' if user created multiple windows quickly 
-	ipcMain.once('app-load-finished', loadFinished);
-    win.webContents.on('did-finish-load', loadFinished);
-};
-
 async function mergePdfs(pdfFiles, xml)
 {
 	if (pdfFiles.length == 1)
@@ -1623,12 +1558,6 @@ function exportDiagram(event, args, directFinalize)
 	if (event != null && event.senderFrame != null &&
 		!validateSender(event.senderFrame)) return null;
 
-	if (args.format == 'vsdx')
-	{
-		exportVsdx(event, args, directFinalize);
-		return;
-	}
-	
 	var browser = null;
 	
 	try
