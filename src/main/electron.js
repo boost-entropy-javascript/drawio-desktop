@@ -417,7 +417,8 @@ app.whenReady().then(() =>
 	{
 		program
 	        .version(app.getVersion())
-	        .usage('[options] [input file/folder]')
+	        .usage('[options] <input file/folder>')
+			.argument('<input file/folder>', 'input drawio file or a folder with drawio files')
 	        .allowUnknownOption() //-h and --help are considered unknown!!
 	        .option('-c, --create', 'creates a new empty file if no file is passed')
 	        .option('-k, --check', 'does not overwrite existing files')
