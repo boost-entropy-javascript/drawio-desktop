@@ -12,11 +12,23 @@ import elecUpPkg from 'electron-updater';
 const {autoUpdater} = elecUpPkg;
 import {PDFDocument} from '@cantoo/pdf-lib';
 import Store from 'electron-store';
-const store = new Store();
 import ProgressBar from 'electron-progressbar';
 import contextMenu from 'electron-context-menu';
 import {spawn} from 'child_process';
 import {disableUpdate as disUpPkg} from './disableUpdate.js';
+
+let store;
+
+try
+{
+	store = new Store();
+}
+catch (e)
+{
+	console.error('Failed to initialize electron-store:', e);
+	store = null;
+}
+
 const disableUpdate = disUpPkg() || 
 						process.env.DRAWIO_DISABLE_UPDATE === 'true' ||
 						process.argv.indexOf('--disable-update') !== -1 ||
@@ -67,9 +79,9 @@ let firstWinLoaded = false
 let firstWinFilePath = null
 const isMac = process.platform === 'darwin'
 const isWin = process.platform === 'win32'
-let enableSpellCheck = store.get('enableSpellCheck');
-enableSpellCheck = enableSpellCheck != null? enableSpellCheck : isMac;
-let enableStoreBkp = store.get('enableStoreBkp') != null? store.get('enableStoreBkp') : true;
+let enableSpellCheck = store != null ? store.get('enableSpellCheck') : false;
+enableSpellCheck = enableSpellCheck != null ? enableSpellCheck : isMac;
+let enableStoreBkp = store != null ? (store.get('enableStoreBkp') != null ? store.get('enableStoreBkp') : true) : false;
 let dialogOpen = false;
 let enablePlugins = false;
 const codeDir = path.join(__dirname, '/../../drawio/src/main/webapp');
@@ -79,7 +91,7 @@ const appBaseDir = path.join(__dirname, __dirname.endsWith(path.join('resources'
 								'/../../../../' : '/../../');
 let appZoom = 1;
 // Disabled by default
-let isGoogleFontsEnabled = store.get('isGoogleFontsEnabled') != null? store.get('isGoogleFontsEnabled') : false;
+let isGoogleFontsEnabled = store != null ? (store.get('isGoogleFontsEnabled') != null? store.get('isGoogleFontsEnabled') : false) : false;
 
 //Read config file
 var queryObj = {
@@ -146,8 +158,8 @@ function isWithinDisplayBounds(pos)
 
 function createWindow (opt = {})
 {
-	let lastWinSizeStr = store.get('lastWinSize');
-	let lastWinSize = lastWinSizeStr ? lastWinSizeStr.split(',') : [1600, 1200];
+	let lastWinSizeStr = (store && store.get('lastWinSize')) || '1200,800,0,0,false,false';
+	let lastWinSize = lastWinSizeStr ? lastWinSizeStr.split(',') : [1200, 800];
 
 	// TODO On some Mac OS, double click the titlebar set incorrect window size
 	if (lastWinSize[0] < 500)
@@ -238,9 +250,12 @@ function createWindow (opt = {})
 
 	function rememberWinSize(win)
 	{
-		const size = win.getSize();
-		const pos = win.getPosition();
-		store.set('lastWinSize', size[0] + ',' + size[1] + ',' + pos[0] + ',' + pos[1] + ',' + win.isMaximized() + ',' + win.isFullScreen());
+		if (store != null)
+		{
+			const size = win.getSize();
+			const pos = win.getPosition();
+			store.set('lastWinSize', size[0] + ',' + size[1] + ',' + pos[0] + ',' + pos[1] + ',' + win.isMaximized() + ',' + win.isFullScreen());
+		}
 	}
 
 	mainWindow.on('maximize', function()
@@ -432,7 +447,7 @@ app.whenReady().then(() =>
 		program
 	        .version(app.getVersion())
 	        .usage('[options] <input file/folder>')
-			.argument('<input file/folder>', 'input drawio file or a folder with drawio files')
+			.argument('[input file/folder]', 'input drawio file or a folder with drawio files')
 	        .allowUnknownOption() //-h and --help are considered unknown!!
 	        .option('-c, --create', 'creates a new empty file if no file is passed')
 	        .option('-k, --check', 'does not overwrite existing files')
@@ -940,8 +955,11 @@ app.whenReady().then(() =>
 	{
 		if (e != null && !validateSender(e.senderFrame)) return null;
 
-		enableSpellCheck = !enableSpellCheck;
-		store.set('enableSpellCheck', enableSpellCheck);
+		if (store != null)
+		{
+			enableSpellCheck = !enableSpellCheck;
+			store.set('enableSpellCheck', enableSpellCheck);
+		}
 	};
 
 	ipcMain.on('toggleSpellCheck', toggleSpellCheck);
@@ -950,8 +968,11 @@ app.whenReady().then(() =>
 	{
 		if (e != null && !validateSender(e.senderFrame)) return null;
 
-		enableStoreBkp = !enableStoreBkp;
-		store.set('enableStoreBkp', enableStoreBkp);
+		if (store != null)
+		{
+			enableStoreBkp = !enableStoreBkp;
+			store.set('enableStoreBkp', enableStoreBkp);
+		}
 	};
 
 	ipcMain.on('toggleStoreBkp', toggleStoreBkp);
@@ -960,8 +981,11 @@ app.whenReady().then(() =>
 	{
 		if (e != null && !validateSender(e.senderFrame)) return null;
 
-		isGoogleFontsEnabled = !isGoogleFontsEnabled;
-		store.set('isGoogleFontsEnabled', isGoogleFontsEnabled);
+		if (store != null)
+		{
+			isGoogleFontsEnabled = !isGoogleFontsEnabled;
+			store.set('isGoogleFontsEnabled', isGoogleFontsEnabled);
+		}
 	}
 
 	ipcMain.on('toggleGoogleFonts', toggleGoogleFonts);
@@ -988,7 +1012,11 @@ app.whenReady().then(() =>
 			!validateSender(e.senderFrame)) return null;
 
 		autoUpdater.checkForUpdates();
-		store.set('dontCheckUpdates', false);
+
+		if (store != null)
+		{
+			store.set('dontCheckUpdates', false);
+		}
 		
 		if (!updateNoAvailAdded) 
 		{
@@ -1132,7 +1160,7 @@ app.whenReady().then(() =>
 		owner: 'jgraph'
 	})
 	
-	if (!disableUpdate && !store.get('dontCheckUpdates'))
+	if (store == null || (!disableUpdate && !store.get('dontCheckUpdates')))
 	{
 		autoUpdater.checkForUpdates()
 	}
@@ -1368,7 +1396,7 @@ autoUpdater.on('update-available', (a, b) =>
 				})
 		    });
 		}
-		else if (result.response === 2)
+		else if (result.response === 2 && store != null)
 		{
 			//save in settings don't check for updates
 			store.set('dontCheckUpdates', true)
