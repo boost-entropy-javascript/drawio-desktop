@@ -437,9 +437,9 @@ app.whenReady().then(() =>
 	var themeRegExp = /^(dark|light)$/;
 	var linkTargetRegExp = /^(auto|new-win|same-win)$/;
 	
-	function argsRange(val) 
+	function argsRange(val)
 	{
-	  return val.split('..').map(Number);
+		return val.split('..').map(n => parseInt(n, 10) - 1);
 	}
 	
 	try
@@ -481,11 +481,11 @@ app.whenReady().then(() =>
 			.option('-a, --all-pages',
 				'export all pages (for PDF format only)')
 			.option('-p, --page-index <pageIndex>',
-				'selects a specific page, if not specified and the format is an image, the first page is selected', parseInt)
+				'selects a specific page (1-based); if not specified and the format is an image, the first page is selected', (i) => parseInt(i) - 1)
 			.option('-l, --layers <comma separated layer indexes>',
 				'selects which layers to export (applies to all pages), if not specified, all layers are selected')
 			.option('-g, --page-range <from>..<to>',
-				'selects a page range (for PDF format only)', argsRange)
+				'selects a page range (1-based, for PDF format only)', argsRange)
 			.option('-u, --uncompressed',
 				'Uncompressed XML output (for XML format only)')
 			.option('-z, --zoom <zoom>',
@@ -571,7 +571,7 @@ app.whenReady().then(() =>
 	    		format = options.format;
 			}
 	    	
-	    	var from = null, to = null;
+	    	let from = null, to = null;
 	    	
 	    	if (options.pageIndex != null && options.pageIndex >= 0)
 			{
@@ -581,9 +581,19 @@ app.whenReady().then(() =>
 			}
 	    	else if (options.pageRange && options.pageRange.length == 2)
 			{
-	    		from = options.pageRange[0] >= 0 ? options.pageRange[0] : null;
-	    		to = options.pageRange[1] >= 0 ? options.pageRange[1] : null;
-				options.allPages = false;
+				const [rangeFrom, rangeTo] = options.pageRange;
+
+				if (rangeFrom >= 0 && rangeTo >= 0 && rangeFrom <= rangeTo)
+				{
+					from = rangeFrom;
+					to = rangeTo;
+					options.allPages = false;
+				}
+				else
+				{
+					console.error('Invalid page range: must be non-negative and from ≤ to');
+					process.exit(1);
+				}
 			}
 
 			var expArgs = {
@@ -1950,6 +1960,14 @@ function checkFileContent(body, enc)
 			
 			// application/svg+xml
 			if (c2 == 's' && c3 == 'v' && c4 == 'g' && c5 == ' ')
+			{
+				return true;
+			}
+
+			// Embed cases img and iframe
+			if (c2 == 'i' && c3 == 'm' && c4 == 'g' && c5 == ' '
+					|| (c2 == 'i' && c3 == 'f' && c4 == 'r' && c5 == 'a'
+							&& c6 == 'm' && c7 == 'e' && c8 == ' '))
 			{
 				return true;
 			}

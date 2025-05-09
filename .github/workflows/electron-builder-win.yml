@@ -47,6 +47,7 @@ jobs:
     - name: Prepare for Windows Build
       shell: powershell #The default shell for Windows
       run: |
+        git config --global url."https://github.com/".insteadOf "git@github.com:"
         npm install -g yarn
         yarn install
     - name: Build for Windows (x32 & arm64)
