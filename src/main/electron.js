@@ -444,6 +444,7 @@ app.whenReady().then(() =>
 	
 	try
 	{
+		program.allowExcessArguments();
 		program
 	        .version(app.getVersion())
 	        .usage('[options] <input file/folder>')

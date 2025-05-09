@@ -1,6 +1,6 @@
 {
   "name": "draw.io",
-  "version": "26.2.15",
+  "version": "27.0.2",
   "description": "draw.io desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
@@ -35,6 +35,7 @@
   },
   "homepage": "https://github.com/jgraph/drawio",
   "dependencies": {
+    "@cantoo/pdf-lib": "^2.3.2",
     "commander": "^13.1.0",
     "compression": "^1.8.0",
     "crc": "^4.3.2",
@@ -43,7 +44,7 @@
     "electron-progressbar": "^2.2.1",
     "electron-store": "^10.0.1",
     "electron-updater": "^6.6.2",
-    "@cantoo/pdf-lib": "^2.3.2"
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",
