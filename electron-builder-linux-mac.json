@@ -41,8 +41,11 @@
   "linux": {
   	"executableName": "drawio",
     "category": "Graphics",
-    "maintainer": "JGraph <support@draw.io>",
+    "maintainer": "JGraph <support@diagrams.net>",
     "icon": "./build",
+    "desktop": {
+      "StartupWMClass": "draw.io"
+    },
     "target": [
       { "target": "AppImage", "arch": [
           "x64",
