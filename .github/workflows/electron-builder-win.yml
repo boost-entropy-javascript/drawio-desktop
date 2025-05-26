@@ -88,3 +88,15 @@ jobs:
         #Disable auto-update for appx also
         yarn run sync disableUpdate
         yarn run release-appx
+
+    - name: Install GitHub CLI
+      uses: cli/cli-action@v1
+
+    - name: Upload portable zip to GitHub Release
+      shell: powershell
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $version = "${{ github.ref }}" -replace 'refs/tags/v', ''
+        gh release upload "v$version" "dist/draw.io-$version-windows.zip" --clobber
+
