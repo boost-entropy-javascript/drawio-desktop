@@ -22,12 +22,6 @@
           ]
       },
       {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-      },
-      {
         "target": "msi",
         "arch": [
           "x64"
@@ -47,9 +41,6 @@
     "artifactName": "${productName}-${version}.${ext}",
     "runAfterFinish": false,
     "createDesktopShortcut": false
-  },
-  "portable": {
-    "artifactName": "${productName}-${version}-windows-no-installer.${ext}"
   },
   "afterPack": "build/fuses.cjs",
   "fileAssociations": [

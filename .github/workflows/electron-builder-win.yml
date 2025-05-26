@@ -69,6 +69,19 @@ jobs:
         #Enable auto-update again
         yarn run sync
         yarn run release-win
+    - name: Build unpacked Windows x64 (for zip portable)
+      shell: powershell
+      run: |
+        yarn run sync disableUpdate
+        yarn run electron-builder --win --x64 --dir
+
+    - name: Zip unpacked x64 build
+      shell: powershell
+      run: |
+        $version = "${{ github.ref }}" -replace 'refs/tags/v', ''
+        cd dist
+        7z a "draw.io-$version-windows.zip" ".\win-unpacked\*"
+
     - name: Build for Windows (APPX)
       shell: powershell #The default shell for Windows
       run: |
