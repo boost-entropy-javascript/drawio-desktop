@@ -12,7 +12,7 @@ Security
 
 draw.io Desktop is designed to be completely isolated from the Internet, apart from the update process. This checks github.com at startup for a newer version and downloads it from an AWS S3 bucket owned by Github. All JavaScript files are self-contained, the Content Security Policy forbids running remotely loaded JavaScript.
 
-No diagram data is ever sent externally, nor do we send any analytics about app usage externally. This means certain functionality for which we do not have a JavaScript implementation do not work in the Desktop build, namely .vsd and Gliffy import.
+No diagram data is ever sent externally, nor do we send any analytics about app usage externally. There is a Content Security Policy in place on the web part of the interface to ensure external transmission cannot happen, even by accident.
 
 Security and isolating the app are the primarily objectives of draw.io desktop. If you ask for anything that involves external connections enabled in the app by default, the answer will be no.
 
@@ -21,7 +21,7 @@ Support
 
 Support is provided on a reasonable business constraints basis, but without anything contractually binding. All support is provided via this repo. There is no private ticketing support for non-paying users.
 
-Purchasing draw.io for Confluence or Jira does not entitle you to commercial support for draw.io desktop, unless you have a paid advanced (premium) edition of draw.io for Confluence Cloud.
+Purchasing draw.io for Confluence or Jira does not entitle you to commercial support for draw.io desktop.
 
 Developing
 ----------
