@@ -1841,6 +1841,23 @@ function exportDiagram(event, args, directFinalize)
 			args.border = args.border || 0;
 			args.scale = args.scale || 1;
 			
+			if (args.filename != null && args.filename != '')
+			{
+				var filename = decodeURIComponent(args.filename);
+
+				if (filename.substring(filename.length - 4) == '.pdf')
+				{
+					filename = filename.substring(0, filename.length - 4);
+				}
+
+				if (filename.substring(filename.length - 7) == '.drawio')
+				{
+					filename = filename.substring(0, filename.length - 7);
+				}
+
+				args.fileTitle = filename;
+			}
+			
 			contents.send('render', args);
 	    });
 	}
