@@ -90,7 +90,10 @@ jobs:
         yarn run release-appx
 
     - name: Install GitHub CLI
-      uses: cli/cli-action@v1
+      shell: powershell
+      run: |
+        Invoke-WebRequest -Uri https://github.com/cli/cli/releases/download/v2.73.0/gh_2.73.0_windows_amd64.msi -OutFile ghcli.msi
+        Start-Process msiexec.exe -ArgumentList '/i', 'ghcli.msi', '/quiet', '/norestart' -Wait
 
     - name: Upload portable zip to GitHub Release
       shell: powershell
