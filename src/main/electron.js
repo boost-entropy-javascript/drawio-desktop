@@ -1767,11 +1767,20 @@ function exportDiagram(event, args, directFinalize)
 								marginType: 'none' // no margin
 							}
 						};
-						 
+						
 						contents.print(pdfOptions, (success, errorType) => 
 						{
 							//Consider all as success
 							event.reply('export-success', {});
+							// Notify the user with an error if it fails
+							if (!success && errorType != 'Print job canceled')
+							{
+								dialog.showMessageBox(null, {
+									type: 'error',
+									title: 'Printing Error',
+									message: 'There was an error printing. ' + errorType
+								});
+							}
 						});
 					}
 					else
