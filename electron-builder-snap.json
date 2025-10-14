@@ -1,6 +1,6 @@
 {
   "appId": "com.jgraph.drawio.desktop",
-  "copyright": "Copyright 2017-2019 draw.io",
+  "copyright": "Copyright 2017-2025 draw.io",
   "asar": true,
   "files": [
     "**/*",
@@ -14,13 +14,14 @@
   "linux": {
   	"executableName": "drawio",
     "category": "Graphics",
-    "maintainer": "JGraph <support@draw.io>",
+    "maintainer": "draw.io <snap@draw.io>",
     "icon": "./build",
     "target": [
       "snap"
     ]
   },
   "snap": {
+    "base": "core24",
     "plugs": [
       "default",
       "removable-media"
