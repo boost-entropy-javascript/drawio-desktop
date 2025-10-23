@@ -21,7 +21,7 @@
     ]
   },
   "snap": {
-    "base": "core24",
+    "base": "core22",
     "plugs": [
       "default",
       "removable-media"
