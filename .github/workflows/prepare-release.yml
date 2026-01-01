@@ -1,0 +1,203 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 29.0.4)'
+        required: true
+        type: string
+      drawio_ref:
+        description: 'draw.io ref to use (tag, branch, or commit). Leave empty to use v{version}'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run - validate only, do not commit'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '24'
+  YARN_VERSION: '4.12.0'
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Validate version format
+        run: |
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be in format X.Y.Z (e.g., 29.0.4)"
+            exit 1
+          fi
+          echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
+          
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          
+      - name: Setup Yarn
+        run: |
+          corepack enable
+          corepack prepare yarn@${{ env.YARN_VERSION }} --activate
+          echo "Node version: $(node --version)"
+          echo "Yarn version: $(yarn --version)"
+          echo "npm version: $(npm --version)"
+          
+      - name: Determine drawio ref
+        run: |
+          if [ -n "${{ inputs.drawio_ref }}" ]; then
+            echo "DRAWIO_REF=${{ inputs.drawio_ref }}" >> $GITHUB_ENV
+          else
+            echo "DRAWIO_REF=v${{ inputs.version }}" >> $GITHUB_ENV
+          fi
+          
+      - name: Update drawio submodule
+        run: |
+          cd drawio
+          git fetch origin --tags
+          
+          # Check if ref exists
+          if ! git rev-parse --verify "${{ env.DRAWIO_REF }}" >/dev/null 2>&1; then
+            echo "::error::Ref '${{ env.DRAWIO_REF }}' not found in drawio repository"
+            exit 1
+          fi
+          
+          git checkout "${{ env.DRAWIO_REF }}"
+          
+          # Update any nested submodules in drawio
+          git submodule update --init --recursive
+          
+          echo "DRAWIO_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "Updated drawio to: $(git describe --tags --always)"
+          cd ..
+          
+      - name: Update package.json version
+        run: |
+          # Update version in package.json
+          jq '.version = "${{ env.VERSION }}"' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          
+          echo "Updated package.json to version ${{ env.VERSION }}"
+          grep '"version"' package.json
+          
+      - name: Install dependencies
+        run: yarn install --immutable
+        
+      - name: Security audit
+        id: audit
+        continue-on-error: true
+        run: |
+          echo "## npm audit results" >> $GITHUB_STEP_SUMMARY
+          
+          # Run audit and capture output
+          npm audit --json > audit-results.json 2>&1 || true
+          
+          # Parse results
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' audit-results.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit-results.json)
+          MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' audit-results.json)
+          LOW=$(jq '.metadata.vulnerabilities.low // 0' audit-results.json)
+          
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Critical | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| Moderate | $MODERATE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+          
+          # Save for artifact
+          npm audit > audit-report.txt 2>&1 || true
+          
+          # Fail if critical or high vulnerabilities
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "::error::Security vulnerabilities found: $CRITICAL critical, $HIGH high"
+            echo "AUDIT_FAILED=true" >> $GITHUB_ENV
+          else
+            echo "AUDIT_FAILED=false" >> $GITHUB_ENV
+          fi
+          
+      - name: Check outdated dependencies
+        run: |
+          echo "## Outdated dependencies" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          yarn outdated >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          yarn outdated > outdated-report.txt 2>&1 || true
+          
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-v${{ env.VERSION }}
+          path: |
+            audit-results.json
+            audit-report.txt
+            outdated-report.txt
+          retention-days: 365
+          
+      - name: Fail if audit has issues
+        if: env.AUDIT_FAILED == 'true'
+        run: |
+          echo "::error::Cannot proceed with release due to security vulnerabilities"
+          echo "Review audit-report.txt and fix vulnerabilities before releasing"
+          exit 1
+          
+      - name: Generate release summary
+        run: |
+          echo "## Release Preparation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ env.VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| drawio ref | ${{ env.DRAWIO_REF }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| drawio commit | ${{ env.DRAWIO_COMMIT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | $(node --version) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Yarn | $(yarn --version) |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm | $(npm --version) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry run | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Commit changes
+        if: inputs.dry_run == false
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add -A
+          git commit -m "Prepare release v${{ env.VERSION }}
+
+          - Updated drawio submodule to ${{ env.DRAWIO_REF }} (${{ env.DRAWIO_COMMIT }})
+          - Updated package.json version to ${{ env.VERSION }}
+          
+          Automated by prepare-release workflow
+          Node.js: $(node --version)
+          Yarn: $(yarn --version)"
+          
+          git push origin HEAD
+          
+      - name: Create version tag
+        if: inputs.dry_run == false
+        run: |
+          git tag -a "v${{ env.VERSION }}" -m "Release v${{ env.VERSION }}"
+          git push origin "v${{ env.VERSION }}"
+          
+      - name: Summary
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "::notice::Dry run complete. No changes committed."
+          else
+            echo "::notice::Release v${{ env.VERSION }} prepared and tagged. Build workflows should trigger automatically."
+          fi
