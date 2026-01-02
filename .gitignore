@@ -4,5 +4,4 @@ node_modules
 /dist/
 /.classpath
 /.settings
-package-lock.json
 .DS_Store

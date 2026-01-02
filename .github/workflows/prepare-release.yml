@@ -49,12 +49,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           check-latest: true
           
-      - name: Setup Yarn via Corepack
+      - name: Log versions
         run: |
-          corepack enable
-          corepack install
           echo "Node version: $(node --version)"
-          echo "Yarn version: $(yarn --version)"
           echo "npm version: $(npm --version)"
           
       - name: Determine drawio ref
@@ -95,7 +92,7 @@ jobs:
           grep '"version"' package.json
           
       - name: Install dependencies
-        run: yarn install --immutable
+        run: npm ci
         
       - name: Security audit
         id: audit
@@ -134,10 +131,10 @@ jobs:
         run: |
           echo "## Outdated dependencies" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          yarn outdated >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          npm outdated >> $GITHUB_STEP_SUMMARY 2>&1 || true
           echo '```' >> $GITHUB_STEP_SUMMARY
           
-          yarn outdated > outdated-report.txt 2>&1 || true
+          npm outdated > outdated-report.txt 2>&1 || true
           
       - name: Upload audit artifacts
         uses: actions/upload-artifact@v4
@@ -166,7 +163,6 @@ jobs:
           echo "| drawio ref | ${{ env.DRAWIO_REF }} |" >> $GITHUB_STEP_SUMMARY
           echo "| drawio commit | ${{ env.DRAWIO_COMMIT }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | $(node --version) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Yarn | $(yarn --version) |" >> $GITHUB_STEP_SUMMARY
           echo "| npm | $(npm --version) |" >> $GITHUB_STEP_SUMMARY
           echo "| Dry run | ${{ inputs.dry_run }} |" >> $GITHUB_STEP_SUMMARY
           
@@ -184,7 +180,7 @@ jobs:
           
           Automated by prepare-release workflow
           Node.js: $(node --version)
-          Yarn: $(yarn --version)"
+          npm: $(npm --version)"
           
           git push origin HEAD
           
