@@ -19,7 +19,6 @@ on:
 
 env:
   NODE_VERSION: '24'
-  YARN_VERSION: '4.12.0'
 
 jobs:
   prepare-release:
@@ -48,11 +47,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          check-latest: true
           
-      - name: Setup Yarn
+      - name: Setup Yarn via Corepack
         run: |
           corepack enable
-          corepack prepare yarn@${{ env.YARN_VERSION }} --activate
+          corepack install
           echo "Node version: $(node --version)"
           echo "Yarn version: $(yarn --version)"
           echo "npm version: $(npm --version)"
