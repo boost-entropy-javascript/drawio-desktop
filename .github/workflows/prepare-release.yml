@@ -7,6 +7,10 @@ on:
         description: 'Release version (e.g., 29.0.4)'
         required: true
         type: string
+      previous_version:
+        description: 'Previous version for changelog (e.g., 29.0.3). Leave empty to auto-detect.'
+        required: false
+        type: string
       drawio_ref:
         description: 'draw.io ref to use (tag, branch, or commit). Leave empty to use v{version}'
         required: false
@@ -26,6 +30,7 @@ jobs:
     
     permissions:
       contents: write
+      pull-requests: write
       
     steps:
       - name: Validate version format
@@ -92,7 +97,53 @@ jobs:
           grep '"version"' package.json
           
       - name: Install dependencies
-        run: npm ci
+        run: |
+          # Use npm install (not ci) to update package-lock.json with latest versions within semver ranges
+          npm install
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ env.VERSION }}"
+          PREV_VERSION="${{ inputs.previous_version }}"
+          
+          # Auto-detect previous version if not provided
+          if [ -z "$PREV_VERSION" ]; then
+            PREV_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "")
+          fi
+          
+          # Get electron version from package-lock.json (actual installed version)
+          ELECTRON_VERSION=$(jq -r '.packages["node_modules/electron"].version' package-lock.json)
+          echo "ELECTRON_VERSION=$ELECTRON_VERSION" >> $GITHUB_ENV
+          
+          # Generate release notes
+          cat > release-notes.md << 'RELEASE_EOF'
+          ## Release Notes for VERSION_PLACEHOLDER
+          
+          [Windows Installer](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/draw.io-VERSION_PLACEHOLDER-windows-installer.exe)
+          [Windows No Installer (zip)](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/draw.io-VERSION_PLACEHOLDER-windows.zip)
+          [macOS - Universal](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/draw.io-universal-VERSION_PLACEHOLDER.dmg)
+          Linux - [deb](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/drawio-amd64-VERSION_PLACEHOLDER.deb), [AppImage](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/drawio-x86_64-VERSION_PLACEHOLDER.AppImage) or [rpm](https://github.com/jgraph/drawio-desktop/releases/download/vVERSION_PLACEHOLDER/drawio-x86_64-VERSION_PLACEHOLDER.rpm)
+          Windows intel x32 releases are marked -ia32-
+          
+          **ChangeLog:**
+          - Uses electron ELECTRON_PLACEHOLDER.
+          - Updates to [draw.io core VERSION_PLACEHOLDER](https://github.com/jgraph/drawio/blob/vVERSION_PLACEHOLDER/ChangeLog).PREV_PLACEHOLDER
+          RELEASE_EOF
+          
+          # Replace placeholders
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" release-notes.md
+          sed -i "s/ELECTRON_PLACEHOLDER/${ELECTRON_VERSION}/g" release-notes.md
+          if [ -n "$PREV_VERSION" ]; then
+            sed -i "s/PREV_PLACEHOLDER/ All changes from ${PREV_VERSION} to ${VERSION} are added in this build./g" release-notes.md
+          else
+            sed -i "s/PREV_PLACEHOLDER//g" release-notes.md
+          fi
+          
+          echo "## Generated Release Notes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat release-notes.md >> $GITHUB_STEP_SUMMARY
+          
+          echo "Release notes generated with Electron version: $ELECTRON_VERSION"
         
       - name: Security audit
         id: audit
@@ -144,6 +195,7 @@ jobs:
             audit-results.json
             audit-report.txt
             outdated-report.txt
+            release-notes.md
           retention-days: 365
           
       - name: Fail if audit has issues
@@ -160,6 +212,7 @@ jobs:
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Version | ${{ env.VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Electron | ${{ env.ELECTRON_VERSION }} |" >> $GITHUB_STEP_SUMMARY
           echo "| drawio ref | ${{ env.DRAWIO_REF }} |" >> $GITHUB_STEP_SUMMARY
           echo "| drawio commit | ${{ env.DRAWIO_COMMIT }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | $(node --version) |" >> $GITHUB_STEP_SUMMARY
@@ -172,28 +225,83 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
+          # Save release notes content before cleanup
+          cp release-notes.md /tmp/release-notes.md
+          
+          # Create release branch
+          git checkout -b "releases/v${{ env.VERSION }}"
+          
+          # Remove generated files that shouldn't be committed
+          # (package-lock.json IS committed to lock electron version)
+          rm -f audit-results.json audit-report.txt outdated-report.txt release-notes.md
+          
           git add -A
           git commit -m "Prepare release v${{ env.VERSION }}
 
           - Updated drawio submodule to ${{ env.DRAWIO_REF }} (${{ env.DRAWIO_COMMIT }})
           - Updated package.json version to ${{ env.VERSION }}
+          - Updated package-lock.json
+          - Electron version: ${{ env.ELECTRON_VERSION }}
           
-          Automated by prepare-release workflow
-          Node.js: $(node --version)
-          npm: $(npm --version)"
+          Automated by prepare-release workflow"
           
-          git push origin HEAD
+          git push origin "releases/v${{ env.VERSION }}"
           
-      - name: Create version tag
+          # Restore release notes for PR creation
+          cp /tmp/release-notes.md release-notes.md
+          
+      - name: Create Pull Request
         if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git tag -a "v${{ env.VERSION }}" -m "Release v${{ env.VERSION }}"
-          git push origin "v${{ env.VERSION }}"
+          # Get the release notes content
+          RELEASE_NOTES=$(cat release-notes.md)
+          
+          # Create PR
+          PR_URL=$(gh pr create \
+            --base dev \
+            --head "releases/v${{ env.VERSION }}" \
+            --title "Release v${{ env.VERSION }}" \
+            --body "## Release Preparation
+
+          This PR prepares release v${{ env.VERSION }}.
+
+          ### Changes
+          - Updated drawio submodule to ${{ env.DRAWIO_REF }}
+          - Updated package.json version to ${{ env.VERSION }}
+          - Electron version: ${{ env.ELECTRON_VERSION }}
+
+          ### Audit Results
+          - npm audit: ✅ No critical/high vulnerabilities
+
+          ### After Merging
+          Create and push the tag to trigger builds:
+          \`\`\`bash
+          git checkout dev
+          git pull
+          git tag -a v${{ env.VERSION }} -m \"Release v${{ env.VERSION }}\"
+          git push origin v${{ env.VERSION }}
+          \`\`\`
+
+          ---
+
+          ${RELEASE_NOTES}
+          ")
+          
+          echo "## Pull Request Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "PR: ${PR_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review and merge the PR" >> $GITHUB_STEP_SUMMARY
+          echo "2. Create the tag: \`git tag -a v${{ env.VERSION }} -m \"Release v${{ env.VERSION }}\"\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Push the tag: \`git push origin v${{ env.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
           
       - name: Summary
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "::notice::Dry run complete. No changes committed."
           else
-            echo "::notice::Release v${{ env.VERSION }} prepared and tagged. Build workflows should trigger automatically."
+            echo "::notice::Release PR created for v${{ env.VERSION }}. Review, merge, then create tag to trigger builds."
           fi
