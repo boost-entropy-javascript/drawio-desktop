@@ -39,7 +39,7 @@ jobs:
         cd drawio
         Remove-Item 'docs','etc','src\main\java','src\main\webapp\connect','src\main\webapp\service-worker*','src\main\webapp\workbox-*' -Recurse -Force
         cd src\main\webapp\js
-        Remove-Item 'atlas-viewer.min.js','atlas.min.js','cryptojs','deflate','dropbox','embed*','freehand','integrate.min.js','jquery','jszip','mermaid','onedrive','orgchart','reader.min.js','rough','sanitizer','shapes.min.js','simplepeer','spin','viewer-static.min.js','viewer.min.js'  -Recurse -Force
+        Remove-Item 'atlas-viewer.min.js','atlas.min.js','cryptojs','deflate','dropbox','embed*','freehand','integrate.min.js','jquery','jszip','mermaid','onedrive','orgchart','reader.min.js','rough','sanitizer','simplepeer','spin','viewer-static.min.js','viewer.min.js'  -Recurse -Force
     - name: Installing Node
       uses: actions/setup-node@v4
       with:
