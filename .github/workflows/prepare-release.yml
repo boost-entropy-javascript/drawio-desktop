@@ -98,7 +98,10 @@ jobs:
           
       - name: Install dependencies
         run: |
-          # Use npm install (not ci) to update package-lock.json with latest versions within semver ranges
+          # Clean install from scratch to ensure package-lock.json has all resolved URLs and integrity hashes.
+          # Without this, entries carried over from a previous node_modules lack these fields,
+          # which breaks offline/sandboxed builds like Flatpak (see #2301).
+          rm -rf node_modules package-lock.json
           npm install
 
       - name: Generate release notes
