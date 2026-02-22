@@ -759,71 +759,78 @@ app.whenReady().then(() =>
 							
 							function startExport()
 							{
+								var replied = false;
 								var mockEvent = {
 									reply: function(msg, data)
 									{
+										if (replied) return;
+										replied = true;
+
 										try
 										{
-											if (data == null || data.length == 0)
+											if (msg == 'export-success')
 											{
-												console.error('Error: Export failed: ' + curFile);
-											}
-											else if (msg == 'export-success')
-											{
-												var outFileName = null;
-												
-												if (outType != null)
+												if (data == null || data.length == 0)
 												{
-													if (outType.isDir)
-													{
-														outFileName = path.join(options.output, path.basename(curFile,
-															path.extname(curFile))) + '.' + format;
-													}
-													else
-													{
-														outFileName = options.output;
-													}
+													console.error('Error: Empty export data: ' + curFile);
 												}
-												else if (inStat.isFile())
+												else
 												{
-													outFileName = path.join(path.dirname(paths[0]), path.basename(paths[0],
-														path.extname(paths[0]))) + '.' + format;
-													
-												}
-												else //dir
-												{
-													outFileName = path.join(path.dirname(curFile), path.basename(curFile,
-														path.extname(curFile))) + '.' + format;
-												}
-												
-												try
-												{
-													var counter = 0;
-													var realFileName = outFileName;
-													
-													if (program.rawArgs.indexOf('-k') > -1 || program.rawArgs.indexOf('--check') > -1)
+													var outFileName = null;
+
+													if (outType != null)
 													{
-														while (fs.existsSync(realFileName))
+														if (outType.isDir)
 														{
-															counter++;
-															realFileName = path.join(path.dirname(outFileName), path.basename(outFileName,
-																path.extname(outFileName))) + '-' + counter + path.extname(outFileName);
+															outFileName = path.join(options.output, path.basename(curFile,
+																path.extname(curFile))) + '.' + format;
+														}
+														else
+														{
+															outFileName = options.output;
 														}
 													}
-													
-													fs.writeFileSync(realFileName, data, null, { flag: 'wx' });
-													console.log(curFile + ' -> ' + realFileName);
-												}
-												catch(e)
-												{
-													console.error('Error writing to file: ' + outFileName);
+													else if (inStat.isFile())
+													{
+														outFileName = path.join(path.dirname(paths[0]), path.basename(paths[0],
+															path.extname(paths[0]))) + '.' + format;
+
+													}
+													else //dir
+													{
+														outFileName = path.join(path.dirname(curFile), path.basename(curFile,
+															path.extname(curFile))) + '.' + format;
+													}
+
+													try
+													{
+														var counter = 0;
+														var realFileName = outFileName;
+
+														if (program.rawArgs.indexOf('-k') > -1 || program.rawArgs.indexOf('--check') > -1)
+														{
+															while (fs.existsSync(realFileName))
+															{
+																counter++;
+																realFileName = path.join(path.dirname(outFileName), path.basename(outFileName,
+																	path.extname(outFileName))) + '-' + counter + path.extname(outFileName);
+															}
+														}
+
+														fs.writeFileSync(realFileName, data);
+														console.log(curFile + ' -> ' + realFileName);
+													}
+													catch(e)
+													{
+														console.error('Error writing to file: ' + outFileName);
+													}
 												}
 											}
 											else
 											{
-												console.error('Error: ' + data + ': ' + curFile);
+												console.error('Error: ' + (data || 'Export failed') + ': ' + curFile);
 											}
-											
+
 											next();
 										}
 										finally
