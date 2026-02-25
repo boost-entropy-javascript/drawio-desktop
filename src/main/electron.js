@@ -817,7 +817,20 @@ app.whenReady().then(() =>
 															}
 														}
 
-														fs.writeFileSync(realFileName, data);
+														let fh = fs.openSync(realFileName,
+															fs.constants.O_SYNC | fs.constants.O_CREAT |
+															fs.constants.O_WRONLY | fs.constants.O_TRUNC);
+
+														try
+														{
+															fs.writeFileSync(fh, data);
+															fs.fsyncSync(fh);
+														}
+														finally
+														{
+															fs.closeSync(fh);
+														}
+
 														console.log(curFile + ' -> ' + realFileName);
 													}
 													catch(e)
@@ -2218,8 +2231,19 @@ async function saveDraft(fileObject, data)
 	}
 	else
 	{
-		await fsProm.writeFile(draftFileName, data, 'utf8');
-		
+		let draftFh;
+
+		try
+		{
+			draftFh = await fsProm.open(draftFileName, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
+			await fsProm.writeFile(draftFh, data, 'utf8');
+			await draftFh.sync(); // Flush to disk
+		}
+		finally
+		{
+			await draftFh?.close();
+		}
+
 		if (isWin)
 		{
 			try
