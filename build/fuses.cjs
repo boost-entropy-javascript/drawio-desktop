@@ -48,7 +48,4 @@ async function addElectronFuses(context)
 module.exports = async (context) =>
 {
     await addElectronFuses(context);
-
-    const { setupQuickLook } = require('./quicklook.cjs');
-    await setupQuickLook(context);
 };

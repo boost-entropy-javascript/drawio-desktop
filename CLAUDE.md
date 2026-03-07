@@ -43,9 +43,8 @@ drawio-desktop/
 ├── drawio/                   # Git submodule - core draw.io editor
 │   └── src/main/webapp/      # Web application loaded in Electron
 ├── build/                    # Build resources
-│   ├── notarize.mjs          # macOS notarization + Quick Look re-signing
-│   ├── fuses.cjs             # Electron security fuses + Quick Look setup
-│   ├── quicklook.cjs         # macOS Quick Look extension assembly
+│   ├── notarize.mjs          # macOS Quick Look setup, signing + notarization
+│   ├── fuses.cjs             # Electron security fuses
 │   ├── quicklook-preview.html # Quick Look preview page (viewer-static.min.js)
 │   ├── quicklook-entitlements.plist # Sandbox entitlements for .appex
 │   └── entitlements.mac.plist
@@ -140,8 +139,9 @@ ipcMain.on('request', (e, data) => { ... });
 - Pressing Space in Finder shows a rendered preview of `.drawio` files
 - Uses `quicklookjs` to embed a Quick Look App Extension (`.appex`) in the app bundle
 - The `.appex` loads `viewer-static.min.js` (with embedded shapes) in a WKWebView
-- **Build flow:** `afterPack` (fuses.cjs → quicklook.cjs) assembles the `.appex`, then `afterSign` (notarize.mjs) re-signs it with sandbox entitlements before notarization
-- Re-signing is needed because Quick Look extensions require `app-sandbox`, but Electron helpers must not be sandboxed — so the `.appex` gets different entitlements than `entitlementsInherit`
+- **Build flow:** `afterPack` (fuses.cjs) applies security fuses, then `afterSign` (notarize.mjs) assembles the `.appex`, signs it with sandbox entitlements, re-signs the outer `.app`, and notarizes
+- The `.appex` is inserted in `afterSign` (not `afterPack`) so it is never present unsigned during electron-builder's signing verification
+- Quick Look extensions require `app-sandbox`, but Electron helpers must not be sandboxed — so the `.appex` gets different entitlements than `entitlementsInherit`
 - The UTI `com.jgraph.drawio` is declared via `extendInfo` in `electron-builder-linux-mac.json`
 - `viewer-static.min.js` is saved to `build/` during CI before the cleanup step removes it from the drawio submodule; for local dev, it's read from the submodule directly
 
