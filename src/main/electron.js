@@ -433,9 +433,12 @@ app.whenReady().then(() =>
         argv.unshift(null)
     }
 
-	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|xml)$/;
+	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|xml|html)$/;
 	var themeRegExp = /^(dark|light)$/;
 	var linkTargetRegExp = /^(auto|new-win|same-win)$/;
+	var htmlThemeRegExp = /^(dark|light|auto)$/;
+	var htmlLinkTargetRegExp = /^(auto|blank|self)$/;
+	function parseBool(val) { return val === 'true'; }
 	
 	function argsRange(val)
 	{
@@ -456,7 +459,7 @@ app.whenReady().then(() =>
 	        .option('-r, --recursive', 'for a folder input, recursively convert all files in sub-folders also')
 	        .option('-o, --output <output file/folder>', 'specify the output file/folder. If omitted, the input file name is used for output with the specified format as extension')
 	        .option('-f, --format <format>',
-			    'if output file name extension is specified, this option is ignored (file type is determined from output extension, possible export formats are pdf, png, jpg, svg, and xml)',
+			    'if output file name extension is specified, this option is ignored (file type is determined from output extension, possible export formats are pdf, png, jpg, svg, xml, and html)',
 			    validFormatRegExp, 'pdf')
 			.option('-q, --quality <quality>',
 				'output image quality for JPEG (default: 90)', parseInt)
@@ -479,7 +482,7 @@ app.whenReady().then(() =>
 			.option('--crop',
 				'crops PDF to diagram size')
 			.option('-a, --all-pages',
-				'export all pages (for PDF format only)')
+				'export all pages (for PDF and HTML formats)')
 			.option('-p, --page-index <pageIndex>',
 				'selects a specific page (1-based); if not specified and the format is an image, the first page is selected', (i) => parseInt(i) - 1)
 			.option('-l, --layers <comma separated layer indexes>',
@@ -487,7 +490,7 @@ app.whenReady().then(() =>
 			.option('-g, --page-range <from>..<to>',
 				'selects a page range (1-based, for PDF format only)', argsRange)
 			.option('-u, --uncompressed',
-				'Uncompressed XML output (for XML format only)')
+				'Uncompressed XML output (for XML and SVG format only)')
 			.option('-z, --zoom <zoom>',
 				'scales the application interface', parseFloat)
 			.option('--svg-theme <theme>',
@@ -496,6 +499,24 @@ app.whenReady().then(() =>
 				'Target of links in the exported SVG image (auto [default], new-win, same-win)', linkTargetRegExp, 'auto')
 			.option('--enable-plugins',
 				'Enable Plugins')
+			.option('--html-theme <theme>',
+				'Theme of the HTML viewer (dark, light, auto [default])', htmlThemeRegExp, 'auto')
+			.option('--html-zoom <true/false>',
+				'Show zoom controls in HTML viewer (default: true)', parseBool, true)
+			.option('--html-lightbox <true/false>',
+				'Enable lightbox in HTML viewer (default: true)', parseBool, true)
+			.option('--html-layers <true/false>',
+				'Show layers toolbar in HTML viewer (default: true)', parseBool, true)
+			.option('--html-tags <true/false>',
+				'Show tags toolbar in HTML viewer (default: true)', parseBool, true)
+			.option('--html-fit <true/false>',
+				'Responsive fit to container width in HTML viewer (default: true)', parseBool, true)
+			.option('--html-link-target <target>',
+				'Link target in HTML viewer (auto [default], blank, self)', htmlLinkTargetRegExp, 'auto')
+			.option('--html-link-color <color>',
+				'Link highlight color in HTML viewer (default: #0000ff)')
+			.option('--html-edit-link <url>',
+				'URL for edit button in HTML viewer')
 	        .parse(argv)
 	}
 	catch(e)
@@ -603,7 +624,7 @@ app.whenReady().then(() =>
 				bg: options.transparent ? 'none' : '#ffffff',
 				from: from,
 				to: to,
-				allPages: format == 'pdf' && options.allPages,
+				allPages: (format == 'pdf' || format == 'html') && options.allPages,
 				scale: (options.scale || 1),
 				embedXml: options.embedDiagram? '1' : '0',
 				embedImages: options.embedSvgImages? '1' : '0',
@@ -853,7 +874,36 @@ app.whenReady().then(() =>
 							    	}
 								};
 
-								exportDiagram(mockEvent, expArgs, true);
+								if (format === 'html')
+								{
+									mockEvent.finalize = function() {};
+									var xml = expArgs.xml;
+
+									if (expArgs.xmlEncoded)
+									{
+										var pngBuf = Buffer.from(xml, 'base64');
+										xml = readPngXml(pngBuf);
+
+										if (xml == null)
+										{
+											mockEvent.reply('export-error', 'No diagram data found in PNG file');
+											return;
+										}
+									}
+									else if (expArgs.csv)
+									{
+										mockEvent.reply('export-error', 'CSV to HTML export is not supported');
+										return;
+									}
+
+									var title = path.basename(curFile, path.extname(curFile));
+									var htmlData = buildHtmlExport(xml, title, options);
+									mockEvent.reply('export-success', htmlData);
+								}
+								else
+								{
+									exportDiagram(mockEvent, expArgs, true);
+								}
 							};
 						}
 						catch(e)
@@ -1632,6 +1682,145 @@ async function mergePdfs(pdfFiles, xml)
 	{
         throw new Error('Error during PDF combination: ' + e.message);
     }
+}
+
+function htmlEntities(str)
+{
+	return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function readPngXml(buffer)
+{
+	var offset = 8; // Skip PNG signature
+
+	while (offset < buffer.length)
+	{
+		var length = buffer.readInt32BE(offset);
+		offset += 4;
+		var type = buffer.toString('ascii', offset, offset + 4);
+		offset += 4;
+
+		if (type === 'tEXt' || type === 'zTXt')
+		{
+			var keyEnd = offset;
+
+			while (keyEnd < offset + length && buffer[keyEnd] !== 0)
+			{
+				keyEnd++;
+			}
+
+			var key = buffer.toString('ascii', offset, keyEnd);
+
+			if (key === 'mxGraphModel')
+			{
+				if (type === 'zTXt')
+				{
+					var dataStart = keyEnd + 2; // Skip null + compression method
+					var compressed = buffer.subarray(dataStart, offset + length);
+					return decodeURIComponent(zlib.inflateRawSync(compressed).toString());
+				}
+				else
+				{
+					return buffer.toString('utf-8', keyEnd + 1, offset + length);
+				}
+			}
+		}
+
+		offset += length + 4; // Skip data + CRC
+	}
+
+	return null;
+}
+
+function buildHtmlExport(xml, title, options)
+{
+	var data = {};
+
+	if (options.htmlLinkColor && options.htmlLinkColor !== 'none')
+	{
+		data.highlight = options.htmlLinkColor;
+	}
+	else
+	{
+		data.highlight = '#0000ff';
+	}
+
+	if (options.htmlLinkTarget && options.htmlLinkTarget !== 'auto')
+	{
+		data.target = options.htmlLinkTarget === 'blank' ? '_blank' : '_self';
+	}
+
+	if (options.htmlLightbox === false)
+	{
+		data.lightbox = false;
+	}
+
+	data.nav = true;
+	data.resize = true;
+	data.xml = xml;
+
+	var tb = [];
+
+	if (options.allPages)
+	{
+		tb.push('pages');
+	}
+
+	if (options.pageIndex != null && options.pageIndex >= 0)
+	{
+		data.page = options.pageIndex;
+	}
+
+	if (options.htmlZoom !== false)
+	{
+		tb.push('zoom');
+	}
+
+	if (options.htmlLayers !== false)
+	{
+		tb.push('layers');
+	}
+
+	if (options.htmlTags !== false)
+	{
+		tb.push('tags');
+	}
+
+	if (tb.length > 0)
+	{
+		if (options.htmlLightbox !== false)
+		{
+			tb.push('lightbox');
+		}
+
+		data.toolbar = tb.join(' ');
+	}
+
+	if (options.htmlTheme && options.htmlTheme !== 'auto')
+	{
+		data['dark-mode'] = options.htmlTheme;
+	}
+
+	if (options.htmlEditLink)
+	{
+		data.edit = options.htmlEditLink;
+	}
+
+	var fit = options.htmlFit !== false;
+
+	var div = '<div class="mxgraph" style="' +
+		(fit ? 'max-width:100%;' : '') +
+		(tb.length > 0 ? 'border:1px solid transparent;' : '') +
+		'" data-mxgraph="' + htmlEntities(JSON.stringify(data)) + '"></div>';
+
+	var scriptTag = '<script type="text/javascript" src="https://viewer.diagrams.net/js/viewer-static.min.js"></script>';
+
+	return '<!--[if IE]><meta http-equiv="X-UA-Compatible" content="IE=5,IE=9" ><![endif]-->\n' +
+		'<!DOCTYPE html>\n<html>\n<head>\n' +
+		'<title>' + htmlEntities(title) + '</title>\n' +
+		'<meta charset="utf-8"/>\n' +
+		'</head>\n<body>\n' + div + '\n' + scriptTag + '\n</body>\n</html>';
 }
 
 //TODO Use canvas to export images if math is not used to speedup export (no capturePage). Requires change to export3.html also
