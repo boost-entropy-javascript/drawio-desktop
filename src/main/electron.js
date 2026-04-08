@@ -235,6 +235,18 @@ function createWindow (opt = {})
 	
 	mainWindow.loadURL(ourl)
 
+	// Intercept Ctrl/Cmd+Shift+V before it reaches the renderer
+	// so paste-without-formatting works even when the web app captures the shortcut
+	mainWindow.webContents.on('before-input-event', (event, input) =>
+	{
+		if (input.type === 'keyDown' && input.key === 'v' &&
+			input.shift && (isMac ? input.meta : input.control) && !input.alt)
+		{
+			event.preventDefault();
+			mainWindow.webContents.pasteAndMatchStyle();
+		}
+	});
+
 	// Open the DevTools.
 	if (__DEV__)
 	{
