@@ -1283,8 +1283,20 @@ app.whenReady().then(() =>
 		owner: 'jgraph'
 	})
 	
-	if (store == null || (!disableUpdate && !store.get('dontCheckUpdates')))
+	// Cache update check - configurable interval (default: 24 hours)
+	const DEFAULT_UPDATE_CHECK_HOURS = 24;
+	const updateCheckHours = store?.get('updateCheckIntervalHours') ?? DEFAULT_UPDATE_CHECK_HOURS;
+	const UPDATE_CHECK_INTERVAL = updateCheckHours * 60 * 60 * 1000;
+	const lastUpdateCheck = store?.get('lastUpdateCheck') || 0;
+	const shouldCheckUpdates = Date.now() - lastUpdateCheck > UPDATE_CHECK_INTERVAL;
+	
+	if (store == null || (!disableUpdate && !store.get('dontCheckUpdates') && shouldCheckUpdates))
 	{
+		if (store != null)
+		{
+			store.set('lastUpdateCheck', Date.now());
+		}
+		
 		autoUpdater.checkForUpdates()
 	}
 })
