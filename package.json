@@ -11,6 +11,7 @@
   "scripts": {
     "start": "electron .",
     "sync": "node ./sync.cjs",
+    "test": "node --test src/test/cli-args.test.js",
     "release-win": "electron-builder --config electron-builder-win.json --publish always",
     "release-win32": "electron-builder --config electron-builder-win32.json --publish always",
     "release-win-arm64": "electron-builder --config electron-builder-win-arm64.json --publish always",
@@ -37,7 +38,6 @@
   "dependencies": {
     "@cantoo/pdf-lib": "^2.6.1",
     "buffer": "^6.0.3",
-    "commander": "^14.0.3",
     "compression": "^1.8.1",
     "crc": "^4.3.2",
     "electron-context-menu": "^4.1.1",

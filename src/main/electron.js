@@ -7,7 +7,7 @@ import {Menu as menu, shell, dialog, session, screen,
 import crc from 'crc';
 import zlib from 'zlib';
 import log from'electron-log';
-import { program } from 'commander';
+import { parseDrawioArgs, formatHelp, validFormatRegExp as validFormatRegExpImport } from './args.js';
 import elecUpPkg from 'electron-updater';
 const {autoUpdater} = elecUpPkg;
 import {PDFDocument} from '@cantoo/pdf-lib';
@@ -443,106 +443,15 @@ app.whenReady().then(() =>
 	})
 	
     let argv = process.argv
-    
+
     // https://github.com/electron/electron/issues/4690#issuecomment-217435222
     if (process.defaultApp != true)
     {
         argv.unshift(null)
     }
 
-	var validFormatRegExp = /^(pdf|svg|png|jpeg|jpg|xml|html)$/;
-	var themeRegExp = /^(dark|light)$/;
-	var linkTargetRegExp = /^(auto|new-win|same-win)$/;
-	var htmlThemeRegExp = /^(dark|light|auto)$/;
-	var htmlLinkTargetRegExp = /^(auto|blank|self)$/;
-	function parseBool(val) { return val === 'true'; }
-	
-	function argsRange(val)
-	{
-		return val.split('..').map(n => parseInt(n, 10) - 1);
-	}
-	
-	try
-	{
-		program.allowExcessArguments();
-		program
-	        .version(app.getVersion())
-	        .usage('[options] <input file/folder>')
-			.argument('[input file/folder]', 'input drawio file or a folder with drawio files')
-	        .allowUnknownOption() //-h and --help are considered unknown!!
-	        .option('-c, --create', 'creates a new empty file if no file is passed')
-	        .option('-k, --check', 'does not overwrite existing files')
-	        .option('-x, --export', 'export the input file/folder based on the given options')
-	        .option('-r, --recursive', 'for a folder input, recursively convert all files in sub-folders also')
-	        .option('-o, --output <output file/folder>', 'specify the output file/folder. If omitted, the input file name is used for output with the specified format as extension')
-	        .option('-f, --format <format>',
-			    'if output file name extension is specified, this option is ignored (file type is determined from output extension, possible export formats are pdf, png, jpg, svg, xml, and html)',
-			    validFormatRegExp, 'pdf')
-			.option('-q, --quality <quality>',
-				'output image quality for JPEG (default: 90)', parseInt)
-			.option('-t, --transparent',
-				'set transparent background for PNG')
-			.option('-e, --embed-diagram',
-				'includes a copy of the diagram (for PNG, SVG and PDF formats only)')
-			.option('--embed-svg-images',
-				'Embed Images in SVG file (for SVG format only)')
-			.option('--embed-svg-fonts <true/false>',
-				'Embed Fonts in SVG file (for SVG format only). Default is true', parseBool, true)
-			.option('-b, --border <border>',
-				'sets the border width around the diagram (default: 0)', parseInt)
-			.option('-s, --scale <scale>',
-				'scales the diagram size', parseFloat)
-			.option('--width <width>',
-				'fits the generated image/pdf into the specified width, preserves aspect ratio.', parseInt)
-			.option('--height <height>',
-				'fits the generated image/pdf into the specified height, preserves aspect ratio.', parseInt)
-			.option('--crop',
-				'crops PDF to diagram size')
-			.option('-a, --all-pages',
-				'export all pages (for PDF and HTML formats)')
-			.option('-p, --page-index <pageIndex>',
-				'selects a specific page (1-based); if not specified and the format is an image, the first page is selected', (i) => parseInt(i) - 1)
-			.option('-l, --layers <comma separated layer indexes>',
-				'selects which layers to export (applies to all pages), if not specified, all layers are selected')
-			.option('-g, --page-range <from>..<to>',
-				'selects a page range (1-based, for PDF format only)', argsRange)
-			.option('-u, --uncompressed',
-				'Uncompressed XML output (for XML and SVG format only)')
-			.option('-z, --zoom <zoom>',
-				'scales the application interface', parseFloat)
-			.option('--svg-theme <theme>',
-				'Theme of the exported SVG image (dark, light, auto [default])', themeRegExp, 'auto')
-			.option('--svg-links-target <target>',
-				'Target of links in the exported SVG image (auto [default], new-win, same-win)', linkTargetRegExp, 'auto')
-			.option('--enable-plugins',
-				'Enable Plugins')
-			.option('--html-theme <theme>',
-				'Theme of the HTML viewer (dark, light, auto [default])', htmlThemeRegExp, 'auto')
-			.option('--html-zoom <true/false>',
-				'Show zoom controls in HTML viewer (default: true)', parseBool, true)
-			.option('--html-lightbox <true/false>',
-				'Enable lightbox in HTML viewer (default: true)', parseBool, true)
-			.option('--html-layers <true/false>',
-				'Show layers toolbar in HTML viewer (default: true)', parseBool, true)
-			.option('--html-tags <true/false>',
-				'Show tags toolbar in HTML viewer (default: true)', parseBool, true)
-			.option('--html-fit <true/false>',
-				'Responsive fit to container width in HTML viewer (default: true)', parseBool, true)
-			.option('--html-link-target <target>',
-				'Link target in HTML viewer (auto [default], blank, self)', htmlLinkTargetRegExp, 'auto')
-			.option('--html-link-color <color>',
-				'Link highlight color in HTML viewer (default: #0000ff)')
-			.option('--html-edit-link <url>',
-				'URL for edit button in HTML viewer')
-	        .parse(argv)
-	}
-	catch(e)
-	{
-		//On parse error, return [exit and commander will show the error message]
-		return;
-	}
-	
-	var options = program.opts();
+	var validFormatRegExp = validFormatRegExpImport;
+	var { opts: options, args: parsedArgs } = parseDrawioArgs(argv);
 	enablePlugins = options.enablePlugins;
 
 	if (options.zoom != null)
@@ -669,7 +578,7 @@ app.whenReady().then(() =>
 				expArgs.extras = JSON.stringify({layers: options.layers.split(',')});
 			}
 
-			var paths = program.args;
+			var paths = parsedArgs;
 			
 			// Remove --no-sandbox arg from the paths
 			if (Array.isArray(paths))
@@ -850,7 +759,7 @@ app.whenReady().then(() =>
 														var counter = 0;
 														var realFileName = outFileName;
 
-														if (program.rawArgs.indexOf('-k') > -1 || program.rawArgs.indexOf('--check') > -1)
+														if (options.check)
 														{
 															while (fs.existsSync(realFileName))
 															{
@@ -977,8 +886,15 @@ app.whenReady().then(() =>
     	
     	return;
 	}
-    else if (program.rawArgs.indexOf('-h') > -1 || program.rawArgs.indexOf('--help') > -1 || program.rawArgs.indexOf('-V') > -1 || program.rawArgs.indexOf('--version') > -1) //To prevent execution when help/version arg is used
+    else if (argv.some(a => a === '-V' || a === '--version')) //To prevent execution when version arg is used
 	{
+		console.log(app.getVersion());
+		app.quit();
+    	return;
+	}
+    else if (argv.some(a => a === '-h' || a === '--help')) //To prevent execution when help arg is used
+	{
+		console.log(formatHelp(app.getVersion()));
 		app.quit();
     	return;
 	}
@@ -1045,7 +961,7 @@ app.whenReady().then(() =>
 		if (loadEvtCount == 2)
 		{
 			//Sending entire program is not allowed in Electron 9 as it is not native JS object
-			win.webContents.send('args-obj', {args: program.args, create: options.create});
+			win.webContents.send('args-obj', {args: parsedArgs, create: options.create});
 		}
 	}
 	
@@ -1057,13 +973,13 @@ app.whenReady().then(() =>
     {
     	if (firstWinFilePath != null)
 		{
-    		if (program.args != null)
+    		if (parsedArgs != null)
     		{
-    			program.args.push(firstWinFilePath);
+    			parsedArgs.push(firstWinFilePath);
     		}
     		else
 			{
-    			program.args = [firstWinFilePath];
+    			parsedArgs = [firstWinFilePath];
 			}
 		}
     	
