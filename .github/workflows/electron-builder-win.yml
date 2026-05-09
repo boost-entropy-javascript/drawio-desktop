@@ -63,14 +63,14 @@ jobs:
     - name: Set up signing dependencies (Azure Trusted Signing)
       shell: powershell
       run: |
-        # Download Microsoft.Trusted.Signing.Client NuGet package and extract dlib.
-        # Pinned version keeps the build reproducible; bump deliberately if needed.
-        # Note: this package is now unlisted on NuGet — Microsoft's successor is
-        # Microsoft.ArtifactSigning.Client. 1.0.95 is the last released version of
-        # the original package; it still resolves by exact version URL. Migration
-        # to the renamed package is tracked as a cleanup task.
-        $package = "Microsoft.Trusted.Signing.Client"
-        $version = "1.0.95"
+        # Download Microsoft.ArtifactSigning.Client NuGet package and extract dlib.
+        # This is Microsoft's renamed successor to Microsoft.Trusted.Signing.Client
+        # (renamed during the Trusted Signing → Artifact Signing rebrand). Despite
+        # the package rename, the dlib filename and path inside the package are
+        # unchanged: bin/x64/Azure.CodeSigning.Dlib.dll. Pinned version keeps the
+        # build reproducible; bump deliberately when a new release is needed.
+        $package = "Microsoft.ArtifactSigning.Client"
+        $version = "1.0.128"
         $url = "https://www.nuget.org/api/v2/package/$package/$version"
         $nupkg = Join-Path $env:TEMP "$package.zip"
         Invoke-WebRequest -Uri $url -OutFile $nupkg
@@ -82,10 +82,16 @@ jobs:
         "TRUSTED_SIGNING_DLIB_PATH=$dlib" | Out-File -FilePath $env:GITHUB_ENV -Append
 
         # Locate signtool.exe (Windows SDK is pre-installed on windows-latest).
+        # Microsoft explicitly notes that the 10.0.20348 SDK (Windows Server 2022) is
+        # not compatible with the Artifact Signing dlib, so filter it out before
+        # picking the highest version. On today's windows-latest the highest SDK is
+        # well above 20348 anyway; this is purely defensive against future runner
+        # image changes. See: https://learn.microsoft.com/azure/artifact-signing/how-to-signing-integrations
         $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\10\.0\.20348\.' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1 -ExpandProperty FullName
-        if (-not $signtool) { throw "signtool.exe not found in Windows SDK" }
+        if (-not $signtool) { throw "signtool.exe not found in Windows SDK (or only the unsupported 10.0.20348 was available)" }
         "SIGNTOOL_PATH=$signtool" | Out-File -FilePath $env:GITHUB_ENV -Append
 
         Write-Host "Trusted Signing dlib: $dlib"
