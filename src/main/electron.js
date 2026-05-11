@@ -2145,7 +2145,8 @@ function exportDiagram(event, args, directFinalize)
 				backgroundThrottling: false,
 				contextIsolation: true,
 				disableBlinkFeatures: 'Auxclick', // Is this needed?
-				offscreen: true,
+				// Electron 42 offscreen DPR defaults to 1; force 2 so post-capture img.resize() downsamples [jgraph/drawio-desktop#2422]
+				offscreen: { deviceScaleFactor: 2 },
 			},
 			show : false,
 			frame: false,
