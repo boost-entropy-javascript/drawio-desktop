@@ -128,8 +128,117 @@ let initialAdaptiveColorsDefault = null;
 const codeDir = path.join(__dirname, '/../../drawio/src/main/webapp');
 const codeUrl = url.pathToFileURL(codeDir).href.replace(/\/.\:\//, str => str.toUpperCase()); // Fix for windows drive letter
 // Production app uses asar archive, so we need to go up two more level. It's extra cautious since asar is read-only anyway.
-const appBaseDir = path.join(__dirname, __dirname.endsWith(path.join('resources', 'app.asar', 'src', 'main')) ? 
+const appBaseDir = path.join(__dirname, __dirname.endsWith(path.join('resources', 'app.asar', 'src', 'main')) ?
 								'/../../../../' : '/../../');
+// Paths the user has authorised through trusted UI (file picker, file association,
+// command line). The renderer is not allowed to write to anything else, even via
+// IPC handlers that pass validateSender. Symlinks are resolved before insertion so
+// the realpath of a blessed path is what's actually authorised.
+//
+// Persisted across sessions via electron-store so drawio's "Open Recent" (which
+// fakes an args-obj entirely in the renderer) still works — recent files are
+// only added to the menu after a successful open via trusted UI, so a path in
+// the persisted set is one we previously authorised.
+const BLESSED_PATHS_KEY = 'blessedPaths';
+const BLESSED_PATHS_MAX = 500;
+const blessedPaths = new Set();
+
+if (store != null)
+{
+	try
+	{
+		const persisted = store.get(BLESSED_PATHS_KEY);
+
+		if (Array.isArray(persisted))
+		{
+			for (const p of persisted)
+			{
+				if (typeof p === 'string' && p) blessedPaths.add(p);
+			}
+		}
+	}
+	catch (e) {} // Bad store contents — start with an empty set.
+}
+
+function persistBlessedPaths()
+{
+	if (store == null) return;
+
+	try
+	{
+		let arr = Array.from(blessedPaths);
+
+		// Cap to keep the store bounded; newest insertions win.
+		if (arr.length > BLESSED_PATHS_MAX)
+		{
+			arr = arr.slice(arr.length - BLESSED_PATHS_MAX);
+		}
+
+		store.set(BLESSED_PATHS_KEY, arr);
+	}
+	catch (e) {}
+}
+
+function blessPath(p)
+{
+	if (typeof p !== 'string' || !p) return;
+
+	try
+	{
+		const resolved = path.resolve(p);
+		blessedPaths.add(resolved);
+
+		try
+		{
+			blessedPaths.add(fs.realpathSync(resolved));
+		}
+		catch (e) {} // Path may not exist yet (Save As) — that's fine.
+
+		persistBlessedPaths();
+	}
+	catch (e) {} // Defensive: blessPath must never throw into a caller's flow.
+}
+
+// One-shot migration: on first launch with the blessedPaths fix, the renderer's
+// drawio "Open Recent" list (in localStorage at key '.recent') contains paths
+// that were opened in prior versions and so were never blessed. Without this
+// migration, autosave would break for every legacy recent file until the user
+// re-opened it via the file picker. Trust-on-first-use is acceptable here: any
+// attacker who could have poisoned localStorage in a prior version already had
+// the broader (pre-fix) attack surface, so this migration does not widen it.
+const BLESSED_PATHS_MIGRATION_KEY = 'blessedPathsLegacyMigrated';
+
+async function migrateLegacyRecentsOnce(webContents)
+{
+	if (store == null) return;
+	if (store.get(BLESSED_PATHS_MIGRATION_KEY)) return;
+
+	try
+	{
+		const recentsJson = await webContents.executeJavaScript(
+			'try { localStorage.getItem(".recent") } catch (e) { null }');
+
+		if (typeof recentsJson === 'string')
+		{
+			const recents = JSON.parse(recentsJson);
+
+			if (Array.isArray(recents))
+			{
+				for (const entry of recents)
+				{
+					if (entry != null && typeof entry.id === 'string' &&
+						entry.id && fs.existsSync(entry.id))
+					{
+						blessPath(entry.id);
+					}
+				}
+			}
+		}
+	}
+	catch (e) {} // Migration is best-effort; never block app startup.
+
+	try { store.set(BLESSED_PATHS_MIGRATION_KEY, true); } catch (e) {}
+}
 let appZoom = 1;
 // Disabled by default
 let isGoogleFontsEnabled = store != null ? (store.get('isGoogleFontsEnabled') != null? store.get('isGoogleFontsEnabled') : false) : false;
@@ -983,9 +1092,12 @@ app.whenReady().then(() =>
 				{
 	    	    	//Open the file if new app request is from opening a file
 	    	    	var potFile = commandLine.pop();
-	    	    	
+
 	    	    	if (fs.existsSync(potFile))
 	    	    	{
+	    	    		// User intent: launched the app from CLI / file association
+	    	    		// while another instance was already running.
+	    	    		blessPath(potFile);
 	    	    		win.webContents.send('args-obj', {args: [potFile]});
 	    	    	}
 				}
@@ -1016,6 +1128,18 @@ app.whenReady().then(() =>
 		
 		if (loadEvtCount == 2)
 		{
+			// User intent: paths passed on the command line / file association.
+			if (Array.isArray(parsedArgs))
+			{
+				for (const a of parsedArgs)
+				{
+					if (typeof a === 'string' && a && fs.existsSync(a))
+					{
+						blessPath(a);
+					}
+				}
+			}
+
 			//Sending entire program is not allowed in Electron 9 as it is not native JS object
 			win.webContents.send('args-obj', {args: parsedArgs, create: options.create});
 		}
@@ -1038,9 +1162,11 @@ app.whenReady().then(() =>
     			parsedArgs = [firstWinFilePath];
 			}
 		}
-    	
+
     	firstWinLoaded = true;
-    	
+
+    	migrateLegacyRecentsOnce(win.webContents);
+
         win.webContents.zoomFactor = appZoom;
         win.webContents.setVisualZoomLevelLimits(1, appZoom);
 		loadFinished();
@@ -1347,11 +1473,14 @@ app.on('activate', function ()
 
 app.on('will-finish-launching', function()
 {
-	app.on("open-file", function(event, filePath) 
+	app.on("open-file", function(event, filePath)
 	{
 	    event.preventDefault();
 		// Creating a new window while a save/open dialog is open crashes the app
 		if (dialogOpen) return;
+
+		// User intent: OS handed us a path via file association.
+		blessPath(filePath);
 
 	    if (firstWinLoaded)
 	    {
@@ -2654,6 +2783,119 @@ function isConflict(origStat, stat)
 	return stat != null && origStat != null && stat.mtimeMs != origStat.mtimeMs;
 };
 
+function reqStr(v, name)
+{
+	if (typeof v !== 'string' || !v)
+	{
+		throw new Error('bad arg: ' + name);
+	}
+
+	return v;
+}
+
+// Returns true if `realpath` is a draft- or backup-naming variant of any path
+// in blessedPaths (same directory, basename starts with DRAFT_PREFEX +
+// origBasename or BKP_PREFEX + origBasename). Drafts and backups are
+// derivative — drawio writes them as siblings of files the user opened.
+function isDraftOrBkpOfBlessed(realpath)
+{
+	const dir = path.dirname(realpath);
+	const base = path.basename(realpath);
+
+	for (const blessed of blessedPaths)
+	{
+		if (path.dirname(blessed) !== dir) continue;
+
+		const blessedBase = path.basename(blessed);
+
+		if (base.startsWith(DRAFT_PREFEX + blessedBase) ||
+			base.startsWith(OLD_DRAFT_PREFEX + blessedBase) ||
+			base.startsWith(BKP_PREFEX + blessedBase) ||
+			base.startsWith(OLD_BKP_PREFEX + blessedBase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// The renderer is semi-untrusted: it parses attacker-controlled diagram XML,
+// .vsdx, SVG, Mermaid, etc. validateSender is necessary but not sufficient,
+// because a renderer-side XSS attacker would also pass it. So write-side IPC
+// handlers must additionally confirm the requested path is one the user has
+// authorised through OS chrome (file picker, file association, argv) — see
+// blessPath. This function realpath-canonicalises the requested path
+// (defeating symlink traversal) and accepts only paths in blessedPaths or
+// their draft/backup siblings.
+async function assertWritablePath(p)
+{
+	if (typeof p !== 'string' || !p || p.includes('\0'))
+	{
+		throw new Error('path not authorised');
+	}
+
+	const resolved = path.resolve(p);
+	let realpath;
+
+	try
+	{
+		realpath = await fsProm.realpath(resolved);
+	}
+	catch (e)
+	{
+		// File doesn't exist yet (e.g. Save As to a new file). Canonicalise
+		// the parent directory so symlinks in the directory chain are still
+		// resolved.
+		try
+		{
+			const parentReal = await fsProm.realpath(path.dirname(resolved));
+			realpath = path.join(parentReal, path.basename(resolved));
+		}
+		catch (e2)
+		{
+			throw new Error('path not authorised');
+		}
+	}
+
+	if (realpath.startsWith(appBaseDir))
+	{
+		throw new Error('path not authorised');
+	}
+
+	// Block writes anywhere inside userData (settings store, plugins, Local
+	// Storage). installPlugin has its own write-into-userData flow and is
+	// out of scope here; it does not go through assertWritablePath.
+	let userDataDir;
+
+	try
+	{
+		userDataDir = path.resolve(app.getPath('userData'));
+	}
+	catch (e)
+	{
+		userDataDir = null;
+	}
+
+	if (userDataDir && (realpath === userDataDir ||
+		realpath.startsWith(userDataDir + path.sep)))
+	{
+		throw new Error('path not authorised');
+	}
+
+	if (blessedPaths.has(realpath) || blessedPaths.has(resolved))
+	{
+		return;
+	}
+
+	if (isDraftOrBkpOfBlessed(realpath) || isDraftOrBkpOfBlessed(resolved))
+	{
+		return;
+	}
+
+	throw new Error('path not authorised');
+};
+
 function getDraftFileName(fileObject)
 {
 	let filePath = fileObject.path;
@@ -2721,54 +2963,66 @@ async function saveDraft(fileObject, data)
 {
 	var draftFileName = fileObject.draftFileName || getDraftFileName(fileObject);
 
-	if (!checkFileContent(data) || path.resolve(draftFileName).startsWith(appBaseDir))
+	if (!checkFileContent(data))
 	{
 		throw new Error('Invalid file data');
 	}
-	else
-	{
-		let draftFh;
 
+	await assertWritablePath(draftFileName);
+
+	let draftFh;
+
+	try
+	{
+		draftFh = await fsProm.open(draftFileName, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
+		await fsProm.writeFile(draftFh, data, 'utf8');
+		await draftFh.sync(); // Flush to disk
+	}
+	finally
+	{
+		await draftFh?.close();
+	}
+
+	if (isWin)
+	{
 		try
 		{
-			draftFh = await fsProm.open(draftFileName, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
-			await fsProm.writeFile(draftFh, data, 'utf8');
-			await draftFh.sync(); // Flush to disk
-		}
-		finally
-		{
-			await draftFh?.close();
-		}
-
-		if (isWin)
-		{
-			try
+			// Add Hidden attribute:
+			var child = spawn('attrib', ['+h', draftFileName]);
+			child.on('error', function(err)
 			{
-				// Add Hidden attribute:
-				var child = spawn('attrib', ['+h', draftFileName]);
-    			child.on('error', function(err) 
-				{
-					console.log('hiding draft file error: ' + err);
-    			});
-			} catch(e) {}
-		}
-
-		return draftFileName;
+				console.log('hiding draft file error: ' + err);
+			});
+		} catch(e) {}
 	}
+
+	return draftFileName;
 }
 
 async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 {
-	if (!checkFileContent(data) || path.resolve(fileObject.path).startsWith(appBaseDir))
+	if (!checkFileContent(data))
 	{
 		throw new Error('Invalid file data');
 	}
+
+	if (fileObject == null || typeof fileObject.path !== 'string')
+	{
+		throw new Error('bad arg: fileObject.path');
+	}
+
+	await assertWritablePath(fileObject.path);
 
 	var retryCount = 0;
 	var backupCreated = false;
 	var bkpPath = path.join(path.dirname(fileObject.path), BKP_PREFEX + path.basename(fileObject.path) + BKP_EXT);
 	const oldBkpPath = path.join(path.dirname(fileObject.path), OLD_BKP_PREFEX + path.basename(fileObject.path) + BKP_EXT);
 	var writeEnc = defEnc || fileObject.encoding;
+
+	// Backup paths are derived siblings of fileObject.path, so they pass the
+	// draft/bkp carve-out — but realpath them anyway in case symlinks have
+	// been planted at those names.
+	await assertWritablePath(bkpPath);
 
 	var writeFile = async function()
 	{
@@ -2814,7 +3068,12 @@ async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 				//Delete old backup file with old prefix
 				if (fs.existsSync(oldBkpPath))
 				{
-					fs.unlink(oldBkpPath, (err) => {}); //Ignore errors
+					try
+					{
+						await assertWritablePath(oldBkpPath);
+						fs.unlink(oldBkpPath, (err) => {}); //Ignore errors
+					}
+					catch (e) {} //Ignore — path failed authorisation, skip cleanup.
 				}
 			}
 
@@ -2889,25 +3148,25 @@ async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 
 async function writeFile(filePath, data, enc)
 {
-	if (!checkFileContent(data, enc) || path.resolve(filePath).startsWith(appBaseDir))
+	if (!checkFileContent(data, enc))
 	{
 		throw new Error('Invalid file data');
 	}
-	else
-	{
-		let fh;
 
-		try
-		{
-			// O_SYNC is for sync I/O and reduce risk of file corruption
-			fh = await fsProm.open(filePath, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
-			await fsProm.writeFile(fh, data, enc);
-			await fh.sync(); // Flush to disk
-		}
-		finally
-		{
-			await fh?.close();
-		}
+	await assertWritablePath(filePath);
+
+	let fh;
+
+	try
+	{
+		// O_SYNC is for sync I/O and reduce risk of file corruption
+		fh = await fsProm.open(filePath, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
+		await fsProm.writeFile(fh, data, enc);
+		await fh.sync(); // Flush to disk
+	}
+	finally
+	{
+		await fh?.close();
 	}
 };
 
@@ -2952,21 +3211,38 @@ async function showOpenDialog(defaultPath, filters, properties)
 {
 	let win = BrowserWindow.getFocusedWindow();
 
-	return dialog.showOpenDialog(win, {
+	const result = await dialog.showOpenDialog(win, {
 		defaultPath: defaultPath,
 		filters: filters,
 		properties: properties
 	});
+
+	if (!result.canceled && Array.isArray(result.filePaths))
+	{
+		for (const fp of result.filePaths)
+		{
+			blessPath(fp);
+		}
+	}
+
+	return result;
 };
 
 async function showSaveDialog(defaultPath, filters)
 {
 	let win = BrowserWindow.getFocusedWindow();
 
-	return dialog.showSaveDialog(win, {
+	const result = await dialog.showSaveDialog(win, {
 		defaultPath: defaultPath,
 		filters: filters
 	});
+
+	if (!result.canceled)
+	{
+		blessPath(result.filePath);
+	}
+
+	return result;
 };
 
 async function installPlugin(filePath)
@@ -3073,15 +3349,17 @@ function clipboardAction(method, data)
 	}
 }
 
-async function deleteFile(file) 
+async function deleteFile(file)
 {
+	await assertWritablePath(file);
+
 	// Reading the header of the file to confirm it is a file we can delete
 	let fh = await fsProm.open(file, O_RDONLY);
 	let buffer = Buffer.allocUnsafe(16);
 	await fh.read(buffer, 0, 16);
 	await fh.close();
 
-	if (checkFileContent(buffer) && !path.resolve(file).startsWith(appBaseDir))
+	if (checkFileContent(buffer))
 	{
 		await fsProm.unlink(file);
 	}
@@ -3203,15 +3481,22 @@ ipcMain.on("rendererReq", async (event, args) =>
 		switch(args.action)
 		{
 		case 'saveFile':
+			if (args.fileObject == null) throw new Error('bad arg: fileObject');
+			reqStr(args.fileObject.path, 'fileObject.path');
 			ret = await saveFile(args.fileObject, args.data, args.origStat, args.overwrite, args.defEnc);
 			break;
 		case 'writeFile':
+			reqStr(args.path, 'path');
 			ret = await writeFile(args.path, args.data, args.enc);
 			break;
 		case 'saveDraft':
+			if (args.fileObject == null) throw new Error('bad arg: fileObject');
+			reqStr(args.fileObject.path, 'fileObject.path');
 			ret = await saveDraft(args.fileObject, args.data);
 			break;
 		case 'getFileDrafts':
+			if (args.fileObject == null) throw new Error('bad arg: fileObject');
+			reqStr(args.fileObject.path, 'fileObject.path');
 			ret = await getFileDrafts(args.fileObject);
 			break;
 		case 'getDocumentsFolder':
@@ -3233,33 +3518,41 @@ ipcMain.on("rendererReq", async (event, args) =>
 			dialogOpen = false;
 			break;
 		case 'installPlugin':
+			reqStr(args.filePath, 'filePath');
 			ret = await installPlugin(args.filePath);
 			break;
 		case 'uninstallPlugin':
+			reqStr(args.plugin, 'plugin');
 			ret = await uninstallPlugin(args.plugin);
 			break;
 		case 'getPluginFile':
+			reqStr(args.plugin, 'plugin');
 			ret = await getPluginFile(args.plugin);
 			break;
 		case 'isPluginsEnabled':
 			ret = enablePlugins;
 			break;
 		case 'dirname':
+			reqStr(args.path, 'path');
 			ret = await dirname(args.path);
 			break;
 		case 'readFile':
+			reqStr(args.filename, 'filename');
 			ret = await readFile(args.filename, args.encoding);
 			break;
 		case 'clipboardAction':
 			ret = await clipboardAction(args.method, args.data);
 			break;
 		case 'deleteFile':
+			reqStr(args.file, 'file');
 			ret = await deleteFile(args.file);
 			break;
 		case 'fileStat':
+			reqStr(args.file, 'file');
 			ret = await fileStat(args.file);
 			break;
 		case 'isFileWritable':
+			reqStr(args.file, 'file');
 			ret = await isFileWritable(args.file);
 			break;
 		case 'windowAction':
@@ -3269,9 +3562,11 @@ ipcMain.on("rendererReq", async (event, args) =>
 			ret = await openExternal(args.url);
 			break;
 		case 'watchFile':
+			reqStr(args.path, 'path');
 			ret = await watchFile(args.path);
 			break;
-		case 'unwatchFile':	
+		case 'unwatchFile':
+			reqStr(args.path, 'path');
 			ret = await unwatchFile(args.path);
 			break;
 		case 'exit':
@@ -3281,7 +3576,7 @@ ipcMain.on("rendererReq", async (event, args) =>
 			ret = await getLocalFonts();
 			break;
 		case 'isFullscreen':
-			ret = BrowserWindow.getFocusedWindow().isFullScreen();
+			ret = BrowserWindow.getFocusedWindow()?.isFullScreen() ?? false;
 			break;
 		};
 
