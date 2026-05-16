@@ -71,11 +71,12 @@ const disableUpdate = disUpPkg() ||
 						fs.existsSync('/.flatpak-info'); //This file indicates running in flatpak sandbox
 const silentUpdate = !disableUpdate && (process.env.DRAWIO_NO_SILENT_UPDATE !== 'true' &&
 										process.argv.indexOf('--no-silent-update') === -1); // Defaults to silent update if not disabled explicitly
-let manualUpdateCheck = false; // Set when the user clicks "Check for updates" so the silent-update path can still acknowledge them
+let manualUpdateCheck = false; // Set when the user clicks "Check for updates" so the manual flow stays interactive even when silentUpdate is on
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'error'
 autoUpdater.logger.transports.console.level = 'error'
-autoUpdater.autoDownload = silentUpdate
+// autoDownload is always false: we trigger downloadUpdate() explicitly so silent vs. interactive paths can branch on manualUpdateCheck
+autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = silentUpdate
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
@@ -1235,22 +1236,20 @@ app.whenReady().then(() =>
 		manualUpdateCheck = true;
 		autoUpdater.checkForUpdates();
 
-		if (store != null)
-		{
-			store.set('dontCheckUpdates', false);
-		}
-
 		if (!updateNoAvailAdded)
 		{
 			updateNoAvailAdded = true;
-			autoUpdater.on('update-not-available', (info) => {
+			autoUpdater.on('update-not-available', (info) =>
+			{
+				if (!manualUpdateCheck) return; // Suppress dialog for boot-time silent checks
+
 				manualUpdateCheck = false;
 				dialog.showMessageBox(
-					{
-						type: 'info',
-						title: 'No updates found',
-						message: 'Your application is up-to-date',
-					})
+				{
+					type: 'info',
+					title: 'No updates found',
+					message: 'Your application is up-to-date',
+				})
 			})
 		}
 	};
@@ -1303,6 +1302,19 @@ app.whenReady().then(() =>
 	let checkForUpdates = {
 		label: 'Check for updates',
 		click: checkForUpdatesFn
+	}
+
+	let autoCheckForUpdates = {
+		label: 'Check for Updates Automatically',
+		type: 'checkbox',
+		checked: store == null || store.get('dontCheckUpdates') !== true,
+		click: (menuItem) =>
+		{
+			if (store != null)
+			{
+				store.set('dontCheckUpdates', !menuItem.checked);
+			}
+		}
 	}
 
 	function setUpdateIntervalFn()
@@ -1369,6 +1381,7 @@ app.whenReady().then(() =>
 	          click() { shell.openExternal('https://github.com/jgraph/drawio-desktop/issues'); }
 			},
 			checkForUpdates,
+			autoCheckForUpdates,
 			setUpdateInterval,
 	        { type: 'separator' },
 			resetZoom,
@@ -1397,7 +1410,7 @@ app.whenReady().then(() =>
 	    
 	    if (disableUpdate)
 		{
-			template[0].submenu.splice(2, 2);
+			template[0].submenu.splice(2, 3);
 		}
 		
 		const menuBar = menu.buildFromTemplate(template)
@@ -1566,20 +1579,10 @@ autoUpdater.on('error', e =>
 
 autoUpdater.on('update-available', (info) =>
 {
-	if (silentUpdate)
+	// Boot-time silent path: download in the background; autoInstallOnAppQuit handles install
+	if (silentUpdate && !manualUpdateCheck)
 	{
-		if (manualUpdateCheck)
-		{
-			manualUpdateCheck = false;
-			dialog.showMessageBox(
-			{
-				type: 'info',
-				title: 'draw.io Update',
-				message: `Downloading draw.io ${info.version} in the background.`,
-				detail: 'It will be installed automatically the next time you quit the application.'
-			});
-		}
-
+		autoUpdater.downloadUpdate();
 		return;
 	}
 
