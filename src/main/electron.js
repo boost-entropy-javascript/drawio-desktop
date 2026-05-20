@@ -79,6 +79,79 @@ autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = silentUpdate
 
+const UPDATE_DOWNLOAD_URL = 'https://get.draw.io';
+let updateFailureDialogShown = false;
+
+// Shows a user-facing fallback message when the in-app updater fails for any reason.
+// Deduped within a short window so a single underlying failure (which can fan out into
+// both a sync throw and an 'error' event) doesn't produce stacked dialogs.
+function notifyUpdateFailure(err, context)
+{
+	manualUpdateCheck = false;
+
+	try { log.error('Update failure (' + (context || 'unknown') + '):', err); }
+	catch (e) { /* swallow logger errors */ }
+
+	if (updateFailureDialogShown) return;
+	updateFailureDialogShown = true;
+	setTimeout(() => { updateFailureDialogShown = false; }, 5000);
+
+	try
+	{
+		dialog.showMessageBox(
+		{
+			type: 'error',
+			title: 'Update Error',
+			message: 'There was a problem updating draw.io.',
+			detail: 'Please manually download and update from ' + UPDATE_DOWNLOAD_URL
+		});
+	}
+	catch (dialogErr)
+	{
+		try { log.error('Failed to show update error dialog:', dialogErr); }
+		catch (e) { /* swallow */ }
+	}
+}
+
+// Invokes an autoUpdater method, catching synchronous throws (e.g. NPEs deep inside
+// electron-updater) and unhandled promise rejections, routing both to the fallback dialog.
+function safeUpdaterCall(label, fn)
+{
+	try
+	{
+		const result = fn();
+
+		if (result != null && typeof result.catch === 'function')
+		{
+			result.catch(err => notifyUpdateFailure(err, label));
+		}
+
+		return result;
+	}
+	catch (err)
+	{
+		notifyUpdateFailure(err, label);
+		return null;
+	}
+}
+
+// Wraps an event listener so an exception in the handler can't escape and tear down
+// the updater (or, worse, crash the process via an unhandled exception in a callback).
+function safeUpdaterListener(label, fn)
+{
+	return function(...args)
+	{
+		try
+		{
+			return fn.apply(this, args);
+		}
+		catch (err)
+		{
+			notifyUpdateFailure(err, label);
+		}
+	};
+}
+
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 //Command option to disable hardware acceleration
@@ -1234,12 +1307,12 @@ app.whenReady().then(() =>
 			!validateSender(e.senderFrame)) return null;
 
 		manualUpdateCheck = true;
-		autoUpdater.checkForUpdates();
+		safeUpdaterCall('checkForUpdates (manual)', () => autoUpdater.checkForUpdates());
 
 		if (!updateNoAvailAdded)
 		{
 			updateNoAvailAdded = true;
-			autoUpdater.on('update-not-available', (info) =>
+			autoUpdater.on('update-not-available', safeUpdaterListener('update-not-available', (info) =>
 			{
 				if (!manualUpdateCheck) return; // Suppress dialog for boot-time silent checks
 
@@ -1250,7 +1323,7 @@ app.whenReady().then(() =>
 					title: 'No updates found',
 					message: 'Your application is up-to-date',
 				})
-			})
+			}))
 		}
 	};
 
@@ -1421,11 +1494,11 @@ app.whenReady().then(() =>
 		menu.setApplicationMenu(null)
 	}
 	
-	autoUpdater.setFeedURL({
+	safeUpdaterCall('setFeedURL', () => autoUpdater.setFeedURL({
 		provider: 'github',
 		repo: 'drawio-desktop',
 		owner: 'jgraph'
-	})
+	}))
 	
 	// Cache update check - configurable interval (default: 24 hours)
 	const DEFAULT_UPDATE_CHECK_HOURS = 24;
@@ -1441,7 +1514,7 @@ app.whenReady().then(() =>
 			store.set('lastUpdateCheck', Date.now());
 		}
 		
-		autoUpdater.checkForUpdates()
+		safeUpdaterCall('checkForUpdates (boot)', () => autoUpdater.checkForUpdates());
 	}
 })
 
@@ -1564,25 +1637,14 @@ app.on('web-contents-created', (event, contents) => {
 	})
 })
 
-autoUpdater.on('error', e =>
-{
-	manualUpdateCheck = false;
-	log.error('@error@\n', e);
-	dialog.showMessageBox(
-	{
-		type: 'error',
-		title: 'Update Error',
-		message: 'An error occurred while updating.',
-		detail: e && e.message ? e.message : String(e)
-	});
-})
+autoUpdater.on('error', e => notifyUpdateFailure(e, 'autoUpdater error event'))
 
-autoUpdater.on('update-available', (info) =>
+autoUpdater.on('update-available', safeUpdaterListener('update-available', (info) =>
 {
 	// Boot-time silent path: download in the background; autoInstallOnAppQuit handles install
 	if (silentUpdate && !manualUpdateCheck)
 	{
-		autoUpdater.downloadUpdate();
+		safeUpdaterCall('downloadUpdate (silent)', () => autoUpdater.downloadUpdate());
 		return;
 	}
 
@@ -1599,20 +1661,27 @@ autoUpdater.on('update-available', (info) =>
 	{
 		if (result.response === 0)
 		{
-			autoUpdater.downloadUpdate()
-			
+			safeUpdaterCall('downloadUpdate (manual)', () => autoUpdater.downloadUpdate())
+
 			var progressBar = new ProgressBar({
 				title: 'draw.io Update',
 			    text: 'Downloading draw.io update...'
 			});
-			
+
 			function reportUpdateError(e)
 			{
-				progressBar.detail = 'Error occurred while fetching updates. ' + (e && e.message? e.message : e)
-				progressBar._window.setClosable(true);
+				try
+				{
+					progressBar.detail = 'Error occurred while fetching updates. ' + (e && e.message? e.message : e)
+					progressBar._window.setClosable(true);
+				}
+				catch (err)
+				{
+					notifyUpdateFailure(err, 'reportUpdateError');
+				}
 			}
 
-			autoUpdater.on('error', e => {
+			autoUpdater.on('error', safeUpdaterListener('download error', e => {
 				if (progressBar._window != null)
 				{
 					reportUpdateError(e);
@@ -1623,11 +1692,11 @@ autoUpdater.on('update-available', (info) =>
 						reportUpdateError(e);
 					});
 				}
-			})
+			}))
 
 			var firstTimeProg = true;
-			
-			autoUpdater.on('download-progress', (d) => {
+
+			autoUpdater.on('download-progress', safeUpdaterListener('download-progress', (d) => {
 				//On mac, download-progress event is not called, so the indeterminate progress will continue until download is finished
 				var percent = d.percent;
 				
@@ -1667,18 +1736,18 @@ autoUpdater.on('update-available', (info) =>
 								progressBar.value = percent;
 							});
 				}
-				else 
+				else
 				{
 					progressBar.value = percent;
 				}
-			});
+			}));
 
-		    autoUpdater.on('update-downloaded', (info) => {
+		    autoUpdater.on('update-downloaded', safeUpdaterListener('update-downloaded', (info) => {
 				if (!progressBar.isCompleted())
 				{
 					progressBar.close()
 				}
-		
+
 				// Ask user to update the app
 				dialog.showMessageBox(
 				{
@@ -1691,10 +1760,10 @@ autoUpdater.on('update-available', (info) =>
 				{
 					if (result.response === 0)
 					{
-						setTimeout(() => autoUpdater.quitAndInstall(), 1)
+						setTimeout(() => safeUpdaterCall('quitAndInstall', () => autoUpdater.quitAndInstall()), 1)
 					}
 				})
-		    });
+		    }));
 		}
 		else if (result.response === 2 && store != null)
 		{
@@ -1702,7 +1771,7 @@ autoUpdater.on('update-available', (info) =>
 			store.set('dontCheckUpdates', true)
 		}
 	})
-})
+}))
 
 //Pdf export
 const MICRON_TO_PIXEL = 264.58 		//264.58 micron = 1 pixel
