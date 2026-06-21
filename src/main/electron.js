@@ -2517,7 +2517,9 @@ function exportDiagram(event, args, directFinalize)
 					if (args.print)
 					{
 						pdfOptions = {
-							scaleFactor: args.pageScale,
+							// scaleFactor is an integer percent in Chromium (Electron 41+ honors
+							// it in the native macOS print dialog), so pageScale 1 = 100%, not 1%.
+							scaleFactor: 100 * (args.pageScale || 1),
 							printBackground: true,
 							pageSize : {
 								width: args.pageWidth * MICRON_TO_PIXEL,
@@ -2961,7 +2963,15 @@ async function assertWritablePath(p)
 		}
 		catch (e2)
 		{
-			throw new Error('path not authorised');
+			// Neither the file nor its parent could be realpath-canonicalised.
+			// This happens on filesystems whose driver doesn't support the
+			// underlying call (e.g. WinFSP "local" / Cryptomator, some FUSE
+			// mounts), not just on missing paths. realpath is a defence-in-depth
+			// measure against symlink traversal; when it's simply unavailable we
+			// must not deny an otherwise-blessed write, so fall back to the
+			// lexically-resolved path. blessedPaths is still consulted below, so
+			// only paths the user authorised through trusted UI are accepted.
+			realpath = resolved;
 		}
 	}
 
