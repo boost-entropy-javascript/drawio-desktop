@@ -1237,7 +1237,7 @@ app.whenReady().then(() =>
 			}
 
 			//Sending entire program is not allowed in Electron 9 as it is not native JS object
-			win.webContents.send('args-obj', {args: parsedArgs, create: options.create, layout: options.layout});
+			win.webContents.send('args-obj', {args: parsedArgs, create: options.create, layout: options.layout, mermaidImage: options.mermaidImage});
 		}
 	}
 	

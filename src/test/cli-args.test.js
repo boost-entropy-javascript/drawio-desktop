@@ -264,6 +264,41 @@ describe('--layout', () =>
 	});
 });
 
+// ─── --mermaid-image ─────────────────────────────────────────────────────────
+
+describe('--mermaid-image', () =>
+{
+	test('defaults to undefined when not passed', () =>
+	{
+		assert.equal(parse([]).opts.mermaidImage, undefined);
+	});
+
+	test('parses 1 / true as true', () =>
+	{
+		assert.equal(parse(['--mermaid-image', '1']).opts.mermaidImage, true);
+		assert.equal(parse(['--mermaid-image', 'true']).opts.mermaidImage, true);
+	});
+
+	test('parses 0 / false as false', () =>
+	{
+		assert.equal(parse(['--mermaid-image', '0']).opts.mermaidImage, false);
+		assert.equal(parse(['--mermaid-image', 'false']).opts.mermaidImage, false);
+	});
+
+	test('consumes its value and keeps the positional file', () =>
+	{
+		const { opts, args } = parse(['in.mmd', '--mermaid-image', '1']);
+		assert.equal(opts.mermaidImage, true);
+		assert.deepEqual(args, ['in.mmd']);
+	});
+
+	test('accepts inline --mermaid-image=1 form', () =>
+	{
+		assert.equal(parse(['--mermaid-image=1']).opts.mermaidImage, true);
+		assert.equal(parse(['--mermaid-image=false']).opts.mermaidImage, false);
+	});
+});
+
 // ─── Numeric options ─────────────────────────────────────────────────────────
 
 describe('numeric options', () =>
