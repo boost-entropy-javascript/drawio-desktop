@@ -2394,10 +2394,7 @@ function exportDiagram(event, args, directFinalize)
 		browser.loadURL(`file://${codeDir}/export3.html`);
 
 		const contents = browser.webContents;
-		var from = args.from;
-		var to = args.to;
-		var pdfs = [];
-			
+
 		contents.on('did-finish-load', function()
 	    {
 			//Set finalize here since it is call in the reply below
@@ -2548,25 +2545,20 @@ function exportDiagram(event, args, directFinalize)
 					}
 					else
 					{
-						contents.printToPDF(pdfOptions).then(async (data) => 
+						contents.printToPDF(pdfOptions).then(async (data) =>
 						{
-							pdfs.push(data);
-							to = to > pageCount? pageCount : to;
-							from++;
-							
-							if (from < to)
-							{
-								args.from = from;
-								args.to = from;
-								ipcMain.once('render-finished', renderingFinishHandler);
-								contents.send('render', args);
-							}
-							else
-							{
-								// TODO extract the correct xml if the source was a pnd file
-								data = await mergePdfs(pdfs, args.embedXml == '1' ? args.xml : null);
-								event.reply('export-success', data);
-							}
+							// The render above already produced a single PDF for the
+							// whole page range (or all pages) with cross-page links
+							// intact. We merge it as-is to normalize the PDF and embed
+							// the diagram XML. Previously the remaining pages of a range
+							// were re-rendered one at a time and appended, which added
+							// duplicate trailing pages and broke internal hyperlinks
+							// [jgraph/drawio-desktop#2170]. "All Pages" was unaffected
+							// because its from/to collapsed to one page, exiting the loop
+							// after the first full-document render.
+							// TODO extract the correct xml if the source was a pnd file
+							data = await mergePdfs([data], args.embedXml == '1' ? args.xml : null);
+							event.reply('export-success', data);
 						})
 						.catch((error) => 
 						{
