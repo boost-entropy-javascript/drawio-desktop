@@ -366,6 +366,32 @@ function collectConfigPaths()
 				});
 			}
 
+			// Libraries offered in the More Shapes dialog
+			if (Array.isArray(config.libraries))
+			{
+				config.libraries.forEach(function(section)
+				{
+					if (section != null && typeof section === 'object' &&
+						Array.isArray(section.entries))
+					{
+						section.entries.forEach(function(entry)
+						{
+							if (entry != null && typeof entry === 'object' &&
+								Array.isArray(entry.libs))
+							{
+								entry.libs.forEach(function(lib)
+								{
+									if (lib != null && typeof lib === 'object')
+									{
+										addUrl(lib.url);
+									}
+								});
+							}
+						});
+					}
+				});
+			}
+
 			if (Array.isArray(config.customFonts))
 			{
 				config.customFonts.forEach(addFont);
@@ -1039,6 +1065,15 @@ app.whenReady().then(() =>
     //Start export mode?
     if (options.export)
 	{
+		// Electron shows an uncaught error in a modal dialog, which stalls a CI
+		// run. Nothing can be trusted after one, so fail the whole export. Also
+		// stops Electron's dialog, which only shows without other listeners
+		process.on('uncaughtException', function(e)
+		{
+			console.error('Error: uncaught exception: ' + ((e != null && e.stack) || e));
+			app.exit(1);
+		});
+
     	var dummyWin = new BrowserWindow({
 			show : false,
 			webPreferences: {
@@ -1261,10 +1296,15 @@ app.whenReady().then(() =>
 					{
 						var curFile = files[fileIndex];
 						
+						// Ends the vsdx import or the export in progress on timeout
+						var abort = null;
+						var timer = null;
+
 						// Outside the try block so the catch below can call it
 						// (ES modules scope function declarations to their block)
 						function next()
 						{
+							clearTimeout(timer);
 							fileIndex++;
 
 							if (fileIndex < files.length)
@@ -1281,6 +1321,17 @@ app.whenReady().then(() =>
 								dummyWin.destroy();
 							}
 						};
+
+						// A renderer that never replies must not stall the batch.
+						// One limit for the whole file, vsdx import included
+						if (options.timeout > 0)
+						{
+							// setTimeout fires at once for delays over 2^31 - 1 ms
+							timer = setTimeout(function()
+							{
+								abort('Export timed out after ' + options.timeout + ' seconds');
+							}, Math.min(options.timeout * 1000, 0x7fffffff));
+						}
 
 						try
 						{
@@ -1337,39 +1388,78 @@ app.whenReady().then(() =>
 
 							if (ext === '.vsdx')
 							{
-								dummyWin.loadURL(`file://${codeDir}/vsdxImporter.html`);
+								// A window per file, so a crashed or stuck importer goes
+								// with it instead of answering for the next file
+								var importWin = new BrowserWindow({
+									show : false,
+									webPreferences: {
+										preload: `${__dirname}/electron-preload.js`,
+										contextIsolation: true,
+										nodeIntegration: false,
+										webviewTag: false,
+										webSecurity: true,
+										disableBlinkFeatures: 'Auxclick'
+									}
+								});
 
-								const contents = dummyWin.webContents;
+								const contents = importWin.webContents;
 
-								// once() and cross-removal: with several vsdx inputs in one
-								// batch, leftover listeners from the previous file would
-								// re-send its content and consume the next file's reply
-								contents.once('did-finish-load', function()
-							    {
-									contents.send('import', fileContent);
+								// Ends the import once, on the importer's reply, a renderer
+								// crash or the timeout, whichever comes first
+								function endImport(xml, error)
+								{
+									if (importWin.isDestroyed()) return;
 
-									function onImportSuccess(e, xml)
-						    	    {
-										if (!validateSender(e.senderFrame)) return null;
+									ipcMain.removeListener('import-success', onImportSuccess);
+									ipcMain.removeListener('import-error', onImportError);
+									importWin.destroy();
 
-										ipcMain.removeListener('import-error', onImportError);
+									if (xml != null)
+									{
 										expArgs.xml = xml;
 										startExport();
-						    	    }
-
-						    	    function onImportError(e)
-						    	    {
-										if (!validateSender(e.senderFrame)) return null;
-
-										ipcMain.removeListener('import-success', onImportSuccess);
-						    	    	console.error('Error: cannot import VSDX file: ' + curFile);
+									}
+									else
+									{
+										console.error('Error: ' + (error || 'cannot import VSDX file') + ': ' + curFile);
 										exportFailed = true;
-						    	    	next();
-						    	    }
+										next();
+									}
+								};
 
-									ipcMain.once('import-success', onImportSuccess);
-									ipcMain.once('import-error', onImportError);
-							    });
+								function onImportSuccess(e, xml)
+								{
+									if (!validateSender(e.senderFrame)) return null;
+
+									endImport(xml);
+								};
+
+								function onImportError(e)
+								{
+									if (!validateSender(e.senderFrame)) return null;
+
+									endImport(null);
+								};
+
+								ipcMain.once('import-success', onImportSuccess);
+								ipcMain.once('import-error', onImportError);
+
+								contents.on('render-process-gone', function(e, details)
+								{
+									endImport(null, 'Renderer process gone (' + details.reason + ')');
+								});
+
+								contents.once('did-finish-load', function()
+								{
+									contents.send('import', fileContent);
+								});
+
+								abort = function(msg)
+								{
+									endImport(null, msg);
+								};
+
+								importWin.loadURL(`file://${codeDir}/vsdxImporter.html`);
 							}
 							else
 							{
@@ -1405,13 +1495,11 @@ app.whenReady().then(() =>
 							function startExport()
 							{
 								var replied = false;
-								var timer = null;
 								var mockEvent = {
 									reply: function(msg, data)
 									{
 										if (replied) return;
 										replied = true;
-										clearTimeout(timer);
 
 										try
 										{
@@ -1504,6 +1592,11 @@ app.whenReady().then(() =>
 								// Replaced by exportDiagram once it has a window to close
 								mockEvent.finalize = function() {};
 
+								abort = function(msg)
+								{
+									mockEvent.reply('export-error', msg);
+								};
+
 								if (format === 'html')
 								{
 									var xml = expArgs.xml;
@@ -1539,12 +1632,14 @@ app.whenReady().then(() =>
 											return;
 										}
 									}
-									else if (expArgs.csv)
+									// Not truthiness: an empty file would slip through as an
+									// HTML page without a diagram
+									else if (expArgs.csv != null)
 									{
 										mockEvent.reply('export-error', 'CSV to HTML export is not supported');
 										return;
 									}
-									else if (expArgs.mermaid)
+									else if (expArgs.mermaid != null)
 									{
 										mockEvent.reply('export-error', 'Mermaid to HTML export is not supported');
 										return;
@@ -1566,17 +1661,6 @@ app.whenReady().then(() =>
 								}
 								else
 								{
-									// A renderer that never replies must not stall the batch
-									if (options.timeout > 0)
-									{
-										// setTimeout fires at once for delays over 2^31 - 1 ms
-										timer = setTimeout(function()
-										{
-											mockEvent.reply('export-error', 'Export timed out after ' +
-												options.timeout + ' seconds');
-										}, Math.min(options.timeout * 1000, 0x7fffffff));
-									}
-
 									exportDiagram(mockEvent, expArgs, true);
 								}
 							};
@@ -2967,6 +3051,20 @@ function exportDiagram(event, args, directFinalize)
 	if (event != null && event.senderFrame != null &&
 		!validateSender(event.senderFrame)) return null;
 
+	// Only the first reply counts: a renderer that dies while printing or
+	// capturing fails that step too, which replies an error of its own
+	var reply = event.reply;
+	var replied = false;
+
+	event.reply = function()
+	{
+		if (!replied)
+		{
+			replied = true;
+			reply.apply(event, arguments);
+		}
+	};
+
 	var browser = null;
 	
 	try
@@ -3002,6 +3100,13 @@ function exportDiagram(event, args, directFinalize)
 		}
 
 		const contents = browser.webContents;
+
+		// A renderer that crashed or was killed (eg. out of memory) never
+		// replies. Not emitted when finalize destroys the window
+		contents.on('render-process-gone', function(e, details)
+		{
+			event.reply('export-error', 'Renderer process gone (' + details.reason + ')');
+		});
 
 		// Resolved diagram XML reported by the renderer (render-finished). For
 		// Mermaid/CSV/layout inputs the CLI never set args.xml (or it's the
