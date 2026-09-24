@@ -10,13 +10,17 @@ import log from'electron-log';
 import { parseDrawioArgs, formatHelp, validFormatRegExp as validFormatRegExpImport } from './args.js';
 import { parseLastWinSize, placeWindowOnDisplays } from './window-bounds.js';
 import { getUpdateChannel } from './update-channel.js';
+import { listExportFiles, lexists, openExportFile } from './export-files.js';
+import { getSystem32Path } from './system-path.js';
+import { writeBackupFile } from './backup-file.js';
+import FileWatcher from './file-watcher.js';
 import elecUpPkg from 'electron-updater';
 const {autoUpdater} = elecUpPkg;
 import {PDFDocument, PDFHexString, PDFName} from '@cantoo/pdf-lib';
 import Store from 'electron-store';
 import ProgressBar from './progress-bar.js';
 import contextMenu from 'electron-context-menu';
-import {spawn, exec} from 'child_process';
+import {spawn, execFile} from 'child_process';
 import {disableUpdate as disUpPkg} from './disableUpdate.js';
 
 let store;
@@ -194,6 +198,16 @@ let firstWinLoaded = false
 let firstWinFilePath = null
 const isMac = process.platform === 'darwin'
 const isWin = process.platform === 'win32'
+
+// Dependencies still start programs by bare name (electron-updater's signature
+// check runs chcp and powershell.exe through cmd.exe). If this variable exists,
+// cmd.exe and libuv skip the working directory when they look for a program
+// [GHSA-qg46-52fx-h7p8]
+if (isWin)
+{
+	process.env.NoDefaultCurrentDirectoryInExePath = '1';
+}
+
 let enableSpellCheck = store != null ? store.get('enableSpellCheck') : false;
 enableSpellCheck = enableSpellCheck != null ? enableSpellCheck : isMac;
 let enableStoreBkp = store != null ? (store.get('enableStoreBkp') != null ? store.get('enableStoreBkp') : true) : false;
@@ -269,7 +283,16 @@ function blessPath(p)
 		{
 			blessedPaths.add(fs.realpathSync(resolved));
 		}
-		catch (e) {} // Path may not exist yet (Save As) — that's fine.
+		catch (e)
+		{
+			// Save As can select a new file in a symlinked directory. Authorise
+			// its canonical destination before the file exists too.
+			try
+			{
+				blessedPaths.add(path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved)));
+			}
+			catch (e2) {} // Some filesystems do not support realpath.
+		}
 
 		persistBlessedPaths();
 	}
@@ -741,6 +764,24 @@ function createWindow (opt = {})
 		legacyLibrariesMigration = migrateLegacyLibrariesOnce(mainWindow.webContents);
 	});
 
+	// File watches are keyed by webContents, so drop this window's watches when
+	// it goes away or navigates: the renderer that armed them is gone and its
+	// fs listeners would keep polling forever [jgraph/drawio-desktop#2541]
+	const watchOwner = mainWindow.webContents;
+
+	watchOwner.on('destroyed', () =>
+	{
+		fileWatcher.unwatchAll(watchOwner);
+	});
+
+	// Only fires once a main frame navigation has committed, so the page that
+	// armed these watches is already gone and an aborted navigation cannot
+	// clear a watch that is still live
+	watchOwner.on('did-navigate', () =>
+	{
+		fileWatcher.unwatchAll(watchOwner);
+	});
+
 	// Intercept Ctrl/Cmd+Shift+V before it reaches the renderer
 	// so paste-without-formatting works even when the web app captures the shortcut
 	mainWindow.webContents.on('before-input-event', (event, input) =>
@@ -1183,23 +1224,17 @@ app.whenReady().then(() =>
 				var exportableExts = ['.drawio', '.dio', '.xml', '.csv', '.vsdx',
 					'.mmd', '.mermaid', '.png', '.svg', '.pdf'];
 
+				// Symbolic links found by the scan are not followed, they
+				// could point outside the folder [GHSA-2w35-fgjm-2vvh]
 				function addDirectoryFiles(dir, isRecursive)
 				{
-					fs.readdirSync(dir).forEach(function(file)
+					listExportFiles(dir, isRecursive, exportableExts, function(link)
 					{
-						var filePath = path.join(dir, file);
-						var stat = fs.statSync(filePath);
-
-						if (stat.isFile() && path.basename(filePath).charAt(0) != '.' &&
-							exportableExts.includes(path.extname(filePath).toLowerCase()))
-						{
-							files.push(filePath);
-							scannedFiles.add(filePath);
-						}
-						if (stat.isDirectory() && isRecursive)
-					    {
-							addDirectoryFiles(filePath, isRecursive)
-					    }
+						console.log('Skipping ' + link + ' (symbolic link)');
+					}).forEach(function(filePath)
+					{
+						files.push(filePath);
+						scannedFiles.add(filePath);
 					});
 				}
 				
@@ -1433,7 +1468,7 @@ app.whenReady().then(() =>
 
 														if (options.check)
 														{
-															while (fs.existsSync(realFileName))
+															while (lexists(realFileName))
 															{
 																counter++;
 																realFileName = path.join(path.dirname(outFileName), path.basename(outFileName,
@@ -1441,9 +1476,10 @@ app.whenReady().then(() =>
 															}
 														}
 
-														let fh = fs.openSync(realFileName,
-															fs.constants.O_SYNC | fs.constants.O_CREAT |
-															fs.constants.O_WRONLY | fs.constants.O_TRUNC);
+														// A typed -o file name is used as given, but names made up
+														// from the input name are never written through a symbolic
+														// link planted there [GHSA-2w35-fgjm-2vvh]
+														let fh = openExportFile(realFileName, realFileName == options.output);
 
 														try
 														{
@@ -1459,7 +1495,8 @@ app.whenReady().then(() =>
 													}
 													catch(e)
 													{
-														console.error('Error writing to file: ' + outFileName);
+														console.error(e.code == 'ELOOP' ? 'Error: output file is a symbolic link: ' + realFileName :
+															'Error writing to file: ' + outFileName);
 														exportFailed = true;
 													}
 												}
@@ -3549,6 +3586,24 @@ async function canonicalisePath(p)
 	}
 	catch (e)
 	{
+		// A dangling or looping symlink is not a new file. Falling back to
+		// its lexical name would authorise writes through that link.
+		let stat;
+
+		try
+		{
+			stat = await fsProm.lstat(resolved);
+		}
+		catch (statError)
+		{
+			if (statError.code !== 'ENOENT') throw statError;
+		}
+
+		if (stat?.isSymbolicLink())
+		{
+			throw new Error('path not authorised');
+		}
+
 		// File doesn't exist yet (e.g. Save As to a new file). Canonicalise
 		// the parent directory so symlinks in the directory chain are still
 		// resolved.
@@ -3589,7 +3644,7 @@ async function canonicalisePath(p)
 // their draft/backup siblings.
 async function assertWritablePath(p)
 {
-	const {resolved, realpath} = await canonicalisePath(p);
+	const {realpath} = await canonicalisePath(p);
 
 	// Block writes anywhere inside userData (settings store, Local Storage)
 	let userDataDir;
@@ -3609,12 +3664,13 @@ async function assertWritablePath(p)
 		throw new Error('path not authorised');
 	}
 
-	if (blessedPaths.has(realpath) || blessedPaths.has(resolved))
+	// The lexical name must never override an unauthorised symlink target.
+	if (blessedPaths.has(realpath))
 	{
 		return;
 	}
 
-	if (isDraftOrBkpOfBlessed(realpath) || isDraftOrBkpOfBlessed(resolved))
+	if (isDraftOrBkpOfBlessed(realpath))
 	{
 		return;
 	}
@@ -3631,15 +3687,14 @@ async function assertWritablePath(p)
 // through a file dialog [jgraph/drawio-desktop#1278].
 async function assertReadablePath(p)
 {
-	const {resolved, realpath} = await canonicalisePath(p);
+	const {realpath} = await canonicalisePath(p);
 
-	if (blessedPaths.has(realpath) || blessedPaths.has(resolved) ||
-		configReadablePaths.has(realpath) || configReadablePaths.has(resolved))
+	if (blessedPaths.has(realpath) || configReadablePaths.has(realpath))
 	{
 		return;
 	}
 
-	if (isDraftOrBkpOfBlessed(realpath) || isDraftOrBkpOfBlessed(resolved))
+	if (isDraftOrBkpOfBlessed(realpath))
 	{
 		return;
 	}
@@ -3649,7 +3704,7 @@ async function assertReadablePath(p)
 	// collected. Refresh once and re-check before refusing.
 	await loadConfigReadablePaths();
 
-	if (configReadablePaths.has(realpath) || configReadablePaths.has(resolved))
+	if (configReadablePaths.has(realpath))
 	{
 		return;
 	}
@@ -3660,7 +3715,7 @@ async function assertReadablePath(p)
 	{
 		try { await legacyLibrariesMigration; } catch (e) {}
 
-		if (blessedPaths.has(realpath) || blessedPaths.has(resolved))
+		if (blessedPaths.has(realpath))
 		{
 			return;
 		}
@@ -3766,7 +3821,7 @@ async function saveDraft(fileObject, data)
 		try
 		{
 			// Add Hidden attribute:
-			var child = spawn('attrib', ['+h', draftFileName]);
+			var child = spawn(getSystem32Path('attrib.exe'), ['+h', draftFileName]);
 			child.on('error', function(err)
 			{
 				console.log('hiding draft file error: ' + err);
@@ -3827,11 +3882,6 @@ async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 	var bkpPath = path.join(path.dirname(fileObject.path), BKP_PREFEX + path.basename(fileObject.path) + BKP_EXT);
 	const oldBkpPath = path.join(path.dirname(fileObject.path), OLD_BKP_PREFEX + path.basename(fileObject.path) + BKP_EXT);
 	var writeEnc = defEnc || fileObject.encoding;
-
-	// Backup paths are derived siblings of fileObject.path, so they pass the
-	// draft/bkp carve-out — but realpath them anyway in case symlinks have
-	// been planted at those names.
-	await assertWritablePath(bkpPath);
 
 	var writeFile = async function()
 	{
@@ -3895,15 +3945,13 @@ async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 		if (enableStoreBkp && !isNew)
 		{
 			//Copy file to backup file (after conflict and stat is checked)
-			let bkpFh;
-
 			try
 			{
-				//Use file read then write to open the backup file direct sync write to reduce the chance of file corruption
+				// An unsafe backup is skipped like other backup failures. The
+				// replacement also handles links planted after this check.
+				await assertWritablePath(bkpPath);
 				let fileContent = await fsProm.readFile(fileObject.path, writeEnc);
-				bkpFh = await fsProm.open(bkpPath, O_SYNC | O_CREAT | O_WRONLY | O_TRUNC);
-				await fsProm.writeFile(bkpFh, fileContent, writeEnc);
-				await bkpFh.sync(); // Flush to disk
+				await writeBackupFile(bkpPath, fileContent, writeEnc);
 				backupCreated = true;
 			}
 			catch (e) 
@@ -3915,14 +3963,12 @@ async function saveFile(fileObject, data, origStat, overwrite, defEnc)
 			}
 			finally 
 			{
-				await bkpFh?.close();
-
-				if (isWin)
+				if (isWin && backupCreated)
 				{
 					try
 					{
 						// Add Hidden attribute:
-						var child = spawn('attrib', ['+h', bkpPath]);
+						var child = spawn(getSystem32Path('attrib.exe'), ['+h', bkpPath]);
 						child.on('error', function(err) 
 						{
 							console.log('hiding backup file error: ' + err);
@@ -4171,49 +4217,58 @@ function openExternal(url)
 	return false;
 }
 
-async function watchFile(filePath)
+const fileWatcher = new FileWatcher(fs);
+
+// The requesting webContents is watched, not the focused window: the app is
+// often not frontmost when a file is opened, and with more than one window the
+// focused one is not the one that asked [jgraph/drawio-desktop#2541]
+async function watchFile(webContents, filePath)
 {
 	await assertReadablePath(filePath);
 
-	let win = BrowserWindow.getFocusedWindow();
-
-	if (win)
+	fileWatcher.watch(webContents, filePath, (curr, prev) =>
 	{
-		fs.watchFile(filePath, (curr, prev) => {
-			try
+		try
+		{
+			if (webContents.isDestroyed())
 			{
-				win.webContents.send('fileChanged', {
-					path: filePath,
-					curr: curr,
-					prev: prev
-				});
+				fileWatcher.unwatchAll(webContents);
+				return;
 			}
-			catch (e) {} // Ignore
-		});
-	}
+
+			webContents.send('fileChanged', {
+				path: filePath,
+				curr: curr,
+				prev: prev
+			});
+		}
+		catch (e) {} // Ignore
+	});
 }
 
-function unwatchFile(filePath)
+function unwatchFile(webContents, filePath)
 {
-	fs.unwatchFile(filePath);
+	fileWatcher.unwatch(webContents, filePath);
 }
 
 function getLocalFonts()
 {
 	return new Promise((resolve) =>
 	{
-		let cmd;
+		let file, args;
 
 		if (process.platform === 'win32')
 		{
-			cmd = 'powershell -NoProfile -command "Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }"';
+			file = getSystem32Path('WindowsPowerShell\\v1.0\\powershell.exe');
+			args = ['-NoProfile', '-command', 'Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }'];
 		}
 		else
 		{
-			cmd = 'fc-list --format="%{family[0]}\\n"';
+			file = 'fc-list';
+			args = ['--format=%{family[0]}\\n'];
 		}
 
-		exec(cmd, {encoding: 'utf8', timeout: 30000}, (err, stdout) =>
+		execFile(file, args, {encoding: 'utf8', timeout: 30000}, (err, stdout) =>
 		{
 			if (err)
 			{
@@ -4320,11 +4375,11 @@ ipcMain.on("rendererReq", async (event, args) =>
 			break;
 		case 'watchFile':
 			reqStr(args.path, 'path');
-			ret = await watchFile(args.path);
+			ret = await watchFile(event.sender, args.path);
 			break;
 		case 'unwatchFile':
 			reqStr(args.path, 'path');
-			ret = await unwatchFile(args.path);
+			ret = await unwatchFile(event.sender, args.path);
 			break;
 		case 'exit':
 			app.quit();
